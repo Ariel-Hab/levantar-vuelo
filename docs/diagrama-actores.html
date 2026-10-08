@@ -1,0 +1,255 @@
+<title>Actores Checkpoint 1</title>
+<style>
+  /* layout: canvas central con panel de leyenda abajo */
+  :root {
+    --bg: #f8f9fb;
+    --surface: #ffffff;
+    --border: #dde1e9;
+    --fg: #1a1d27;
+    --fg-muted: #6b7280;
+    --accent-cyan: #06b6d4;
+    --accent-green: #10b981;
+    --accent-violet: #8b5cf6;
+    --accent-amber: #f59e0b;
+    --accent-rose: #f43f5e;
+    --accent-slate: #64748b;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --border: #2d3148;
+      --fg: #e8eaf0;
+      --fg-muted: #8892a4;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --border: #2d3148;
+    --fg: #e8eaf0;
+    --fg-muted: #8892a4;
+    color-scheme: dark;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: 'JetBrains Mono', 'Fira Mono', ui-monospace, monospace;
+    padding: 24px 16px;
+  }
+
+  h1 {
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fg-muted);
+    margin-bottom: 20px;
+  }
+
+  .canvas {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: auto;
+    padding: 16px;
+  }
+
+  svg text { font-family: 'JetBrains Mono', 'Fira Mono', ui-monospace, monospace; }
+
+  /* leyenda */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 20px;
+    margin-top: 16px;
+    font-size: 0.72rem;
+    color: var(--fg-muted);
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-dot {
+    width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+  }
+</style>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap">
+
+<h1>Diagrama de actores — checkpoint 1</h1>
+
+<div class="canvas">
+<svg viewBox="0 0 820 560" width="820" style="max-width:100%;display:block">
+  <defs>
+    <!-- flechas -->
+    <marker id="ac" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#06b6d4"/>
+    </marker>
+    <marker id="ag" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#10b981"/>
+    </marker>
+    <marker id="av" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#8b5cf6"/>
+    </marker>
+    <marker id="aa" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#f59e0b"/>
+    </marker>
+    <marker id="ar" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#f43f5e"/>
+    </marker>
+    <marker id="as" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="#64748b"/>
+    </marker>
+  </defs>
+
+  <!-- ================================================================ -->
+  <!-- CAJA: Supervisor                                                   -->
+  <!-- ================================================================ -->
+  <rect x="160" y="20" width="500" height="520" rx="10"
+        fill="none" stroke="#2d3148" stroke-width="1.2" stroke-dasharray="6 4"/>
+  <text x="175" y="44" fill="#64748b" font-size="10" font-weight="600" letter-spacing="0.08em">SUPERVISOR  one_for_one</text>
+
+  <!-- ================================================================ -->
+  <!-- NODO: HTTP Client / Usuario                                        -->
+  <!-- ================================================================ -->
+  <rect x="20" y="100" width="110" height="52" rx="6"
+        fill="none" stroke="#64748b" stroke-width="1.5"/>
+  <text x="75" y="121" text-anchor="middle" fill="#e8eaf0" font-size="10" font-weight="600">Cliente HTTP</text>
+  <text x="75" y="138" text-anchor="middle" fill="#8892a4" font-size="8">curl / browser</text>
+
+  <!-- ================================================================ -->
+  <!-- NODO: Bandit / Router                                              -->
+  <!-- ================================================================ -->
+  <rect x="200" y="80" width="160" height="60" rx="6"
+        fill="rgba(6,182,212,0.08)" stroke="#06b6d4" stroke-width="1.5"/>
+  <text x="280" y="105" text-anchor="middle" fill="#06b6d4" font-size="11" font-weight="600">Router + Bandit</text>
+  <text x="280" y="122" text-anchor="middle" fill="#8892a4" font-size="8">Plug.Router · :4000</text>
+
+  <!-- ================================================================ -->
+  <!-- NODO: Registry                                                     -->
+  <!-- ================================================================ -->
+  <rect x="200" y="200" width="160" height="52" rx="6"
+        fill="rgba(100,116,139,0.1)" stroke="#64748b" stroke-width="1.5"/>
+  <text x="280" y="222" text-anchor="middle" fill="#94a3b8" font-size="11" font-weight="600">Registry</text>
+  <text x="280" y="238" text-anchor="middle" fill="#8892a4" font-size="8">flight_id → PID</text>
+
+  <!-- ================================================================ -->
+  <!-- NODO: FlightServer (instancia)                                     -->
+  <!-- ================================================================ -->
+  <rect x="200" y="310" width="160" height="100" rx="6"
+        fill="rgba(16,185,129,0.08)" stroke="#10b981" stroke-width="1.5"/>
+  <text x="280" y="334" text-anchor="middle" fill="#10b981" font-size="11" font-weight="600">FlightServer</text>
+  <text x="280" y="350" text-anchor="middle" fill="#8892a4" font-size="8">GenServer · un proc/vuelo</text>
+  <text x="280" y="366" text-anchor="middle" fill="#8892a4" font-size="8">estado: %Flight{}</text>
+  <text x="280" y="382" text-anchor="middle" fill="#8892a4" font-size="8">timer: offer_ends_at</text>
+
+  <!-- ================================================================ -->
+  <!-- NODO: Flight (módulo puro)                                         -->
+  <!-- ================================================================ -->
+  <rect x="200" y="460" width="160" height="60" rx="6"
+        fill="rgba(16,185,129,0.05)" stroke="#10b981" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="280" y="484" text-anchor="middle" fill="#10b981" font-size="11" font-weight="600">Flight</text>
+  <text x="280" y="500" text-anchor="middle" fill="#8892a4" font-size="8">módulo puro · sin proc</text>
+
+  <!-- ================================================================ -->
+  <!-- NODO: AlertIndex                                                   -->
+  <!-- ================================================================ -->
+  <rect x="460" y="200" width="160" height="52" rx="6"
+        fill="rgba(139,92,246,0.08)" stroke="#8b5cf6" stroke-width="1.5"/>
+  <text x="540" y="222" text-anchor="middle" fill="#8b5cf6" font-size="11" font-weight="600">AlertIndex</text>
+  <text x="540" y="238" text-anchor="middle" fill="#8892a4" font-size="8">GenServer · mapa alertas</text>
+
+  <!-- ================================================================ -->
+  <!-- NODO: Alert (módulo puro)                                          -->
+  <!-- ================================================================ -->
+  <rect x="460" y="310" width="160" height="52" rx="6"
+        fill="rgba(139,92,246,0.05)" stroke="#8b5cf6" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="540" y="334" text-anchor="middle" fill="#8b5cf6" font-size="11" font-weight="600">Alert</text>
+  <text x="540" y="350" text-anchor="middle" fill="#8892a4" font-size="8">módulo puro · matches?/2</text>
+
+  <!-- ================================================================ -->
+  <!-- NODO: Notifier (helper)                                            -->
+  <!-- ================================================================ -->
+  <rect x="460" y="420" width="160" height="52" rx="6"
+        fill="rgba(245,158,11,0.08)" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="540" y="444" text-anchor="middle" fill="#f59e0b" font-size="11" font-weight="600">notify_users</text>
+  <text x="540" y="460" text-anchor="middle" fill="#8892a4" font-size="8">Logger (→ SSE en cp-2)</text>
+
+  <!-- ================================================================ -->
+  <!-- NODO: BEAM timer                                                   -->
+  <!-- ================================================================ -->
+  <rect x="660" y="310" width="130" height="52" rx="6"
+        fill="rgba(244,63,94,0.08)" stroke="#f43f5e" stroke-width="1.5"/>
+  <text x="725" y="334" text-anchor="middle" fill="#f43f5e" font-size="10" font-weight="600">BEAM runtime</text>
+  <text x="725" y="350" text-anchor="middle" fill="#8892a4" font-size="8">send :offer_expired</text>
+
+  <!-- ================================================================== -->
+  <!-- FLECHAS                                                             -->
+  <!-- ================================================================== -->
+
+  <!-- Cliente → Router (HTTP request) -->
+  <line x1="130" y1="126" x2="196" y2="110" stroke="#06b6d4" stroke-width="1.4" marker-end="url(#ac)"/>
+  <text x="150" y="107" fill="#06b6d4" font-size="8">HTTP</text>
+
+  <!-- Router → Registry (lookup vía via/1) -->
+  <line x1="280" y1="140" x2="280" y2="196" stroke="#64748b" stroke-width="1.4" marker-end="url(#as)"/>
+  <text x="285" y="174" fill="#64748b" font-size="8">lookup</text>
+
+  <!-- Registry → FlightServer (devuelve PID) -->
+  <line x1="280" y1="252" x2="280" y2="306" stroke="#64748b" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#as)"/>
+  <text x="285" y="284" fill="#64748b" font-size="8">PID</text>
+
+  <!-- Router → FlightServer (call: reserve / assign_seats) -->
+  <path d="M360 110 Q420 110 420 360 L364 360" fill="none" stroke="#10b981" stroke-width="1.4" marker-end="url(#ag)"/>
+  <text x="422" y="150" fill="#10b981" font-size="8">call</text>
+  <text x="422" y="163" fill="#8892a4" font-size="7">reserve</text>
+  <text x="422" y="175" fill="#8892a4" font-size="7">assign_seats</text>
+
+  <!-- FlightServer → Flight (llama funciones puras) -->
+  <line x1="280" y1="410" x2="280" y2="456" stroke="#10b981" stroke-width="1.4" marker-end="url(#ag)"/>
+  <text x="285" y="440" fill="#10b981" font-size="8">delega</text>
+
+  <!-- Router → AlertIndex (call: add / remove / matching_users) -->
+  <line x1="360" y1="120" x2="456" y2="220" stroke="#8b5cf6" stroke-width="1.4" marker-end="url(#av)"/>
+  <text x="395" y="165" fill="#8b5cf6" font-size="8">call</text>
+  <text x="395" y="177" fill="#8892a4" font-size="7">add/remove</text>
+  <text x="395" y="189" fill="#8892a4" font-size="7">matching_users</text>
+
+  <!-- AlertIndex → Alert (matches?/2) -->
+  <line x1="540" y1="252" x2="540" y2="306" stroke="#8b5cf6" stroke-width="1.4" marker-end="url(#av)"/>
+  <text x="545" y="284" fill="#8b5cf6" font-size="8">matches?</text>
+
+  <!-- AlertIndex → Notifier (lista de user_ids) -->
+  <line x1="540" y1="362" x2="540" y2="416" stroke="#f59e0b" stroke-width="1.4" marker-end="url(#aa)"/>
+  <text x="545" y="394" fill="#f59e0b" font-size="8">user_ids</text>
+
+  <!-- FlightServer → Notifier (al cerrar: sold_out / expired) -->
+  <line x1="360" y1="380" x2="456" y2="444" stroke="#f59e0b" stroke-width="1.4" marker-end="url(#aa)"/>
+  <text x="380" y="428" fill="#f59e0b" font-size="8">notify</text>
+  <text x="380" y="440" fill="#8892a4" font-size="7">closed</text>
+
+  <!-- BEAM timer → FlightServer handle_info -->
+  <line x1="656" y1="336" x2="364" y2="362" stroke="#f43f5e" stroke-width="1.4" stroke-dasharray="5 3" marker-end="url(#ar)"/>
+  <text x="480" y="330" fill="#f43f5e" font-size="8">:offer_expired</text>
+  <text x="480" y="342" fill="#8892a4" font-size="7">handle_info</text>
+
+  <!-- Router → Cliente (HTTP response) -->
+  <path d="M200 150 L90 150 L90 140" fill="none" stroke="#06b6d4" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#ac)"/>
+  <text x="95" y="148" fill="#06b6d4" font-size="8">201/200/409</text>
+
+</svg>
+</div>
+
+<div class="legend">
+  <div class="legend-item"><span class="legend-dot" style="background:#06b6d4"></span>HTTP / Router</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#10b981"></span>FlightServer / Flight</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#8b5cf6"></span>AlertIndex / Alert</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#f59e0b"></span>Notificaciones</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#f43f5e"></span>Timer (BEAM runtime)</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#64748b"></span>Registry lookup</div>
+  <div class="legend-item">— — línea punteada = async / respuesta</div>
+</div>

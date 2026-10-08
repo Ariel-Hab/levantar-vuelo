@@ -66,6 +66,7 @@ No se puede tener consistencia perfecta y disponibilidad perfecta al mismo tiemp
 
 ### Documentación de arquitectura
 
+- **[docs/diagrama-actores.html](docs/diagrama-actores.html)** — diagrama de actores del checkpoint 1: Router, FlightServer, Registry, AlertIndex y sus relaciones. Ver en el navegador.
 - **[docs/arquitectura-ivan.html](docs/arquitectura-ivan.html)** — diagrama interactivo completo (4 paneles: publicar vuelo, reservar con quorum, failover, topología). Ver en el navegador.
 - **[Propuesta de arquitectura completa](https://github.com/IvanErazun/ASWC-Grupo-2/blob/claude/practico-architecture-design-1r5hlq/docs/arquitectura.md)** — documento de trabajo del equipo con decisiones, trade-offs y preguntas al tutor.
 
