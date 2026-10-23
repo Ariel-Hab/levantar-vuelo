@@ -11,7 +11,7 @@ Cada checkpoint tiene su propia carpeta con el proyecto completo tal como quedó
 | # | Fecha | Estado | Carpeta |
 |---|---|---|---|
 | 1 | 08/10 | 🔖 v1 | [checkpoint-1/](checkpoint-1/) |
-| 2 | 29/10 | 🔜 Pendiente | — |
+| 2 | 29/10 | 📝 Planificado | [plan](checkpoint-2/docs/plan.md) |
 | Final | 13/12 | 🔜 Pendiente | — |
 
 Dentro de cada carpeta hay un `docs/` con las decisiones de diseño y el debate del equipo.
