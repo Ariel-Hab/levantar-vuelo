@@ -34,16 +34,24 @@ defmodule LevantarVuelo.Flight do
 
   @doc """
   Agrega una reserva pendiente al vuelo. Overbooking permitido:
-  se puede reservar aunque no queden asientos disponibles.
+  se puede reservar aunque no queden asientos disponibles. Es idempotente
   Devuelve {:ok, reservation_id, nuevo_estado} o {:error, :flight_closed}.
   """
   def reserve(%__MODULE__{status: {:closed, _}}, _user_id, _reservation_id),
     do: {:error, :flight_closed}
 
   def reserve(%__MODULE__{} = flight, user_id, reservation_id) do
-    reservation = %{user_id: user_id, status: :pending, seats: []}
-    new_state = put_in(flight.reservations[reservation_id], reservation)
-    {:ok, reservation_id, new_state}
+    case Map.get(flight.reservations, reservation_id) do
+      nil ->
+        reservation = %{user_id: user_id, status: :pending, seats: []}
+        {:ok, reservation_id, put_in(flight.reservations[reservation_id], reservation)}
+
+      %{user_id: ^user_id} ->
+        {:ok, reservation_id, flight}            # reintento: no cambia nada
+
+      _ ->
+        {:error, :reservation_id_taken}          # ese id es de otro usuario
+    end
   end
 
   # --- Elegir asientos (F5) ---

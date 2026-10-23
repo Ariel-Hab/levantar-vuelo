@@ -10,7 +10,9 @@ defmodule LevantarVuelo.Application do
     children = [
       {Registry, keys: :unique, name: LevantarVuelo.Registry},
       LevantarVuelo.AlertIndex,
-      {Bandit, plug: LevantarVuelo.Router, port: 4000}
+      {DynamicSupervisor, strategy: :one_for_one, name: LevantarVuelo.DynamicSupervisor},
+      {Bandit, plug: LevantarVuelo.Router, port: System.get_env("PORT", "4000")}
+
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html

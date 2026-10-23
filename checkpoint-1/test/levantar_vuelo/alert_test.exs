@@ -74,7 +74,7 @@ defmodule LevantarVuelo.AlertIndexTest do
     AlertIndex.add(Alert.new(%{id: "a3", user_id: "u3", origin: "AEP", destination: "MAD", date: nil, month: nil}))
 
     vuelo = %{origin: "EZE", destination: "MAD", departs_at: ~U[2026-12-15 10:00:00Z]}
-    users = AlertIndex.matching_users(vuelo)
+    {:ok, users} = AlertIndex.matching_users(vuelo)
 
     assert "u1" in users
     assert "u2" in users
@@ -86,7 +86,7 @@ defmodule LevantarVuelo.AlertIndexTest do
     AlertIndex.remove("a1")
 
     vuelo = %{origin: "EZE", destination: "MAD", departs_at: ~U[2026-12-15 10:00:00Z]}
-    assert AlertIndex.matching_users(vuelo) == []
+    assert AlertIndex.matching_users(vuelo) == {:ok, []}
   end
 
   test "si el mismo usuario tiene dos alertas que coinciden aparece una sola vez" do
@@ -94,7 +94,7 @@ defmodule LevantarVuelo.AlertIndexTest do
     AlertIndex.add(Alert.new(%{id: "a2", user_id: "u1", origin: "EZE", destination: "MAD", date: nil, month: {2026, 12}}))
 
     vuelo = %{origin: "EZE", destination: "MAD", departs_at: ~U[2026-12-15 10:00:00Z]}
-    users = AlertIndex.matching_users(vuelo)
+    {:ok, users} = AlertIndex.matching_users(vuelo)
 
     assert users == ["u1"]
   end

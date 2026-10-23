@@ -36,6 +36,30 @@ defmodule LevantarVuelo.FlightTest do
       {cerrado, _} = Flight.close(vuelo_base(), :expired)
       assert {:error, :flight_closed} = Flight.reserve(cerrado, "u1", "r1")
     end
+
+    # Idempotencia: si el cliente reintenta (por ejemplo después de un timeout)
+    # la reserva no tiene que volver a pending ni perder los asientos.
+    test "reintentar con el mismo id no pisa la reserva (idempotente)" do
+      flight = vuelo_base()
+      {:ok, "r1", f1} = Flight.reserve(flight, "ana", "r1")
+      {:ok, f2, [:window]} = Flight.assign_seats(f1, "r1", [:window])
+
+      # El reintento devuelve lo mismo que la primera vez...
+      assert {:ok, "r1", f3} = Flight.reserve(f2, "ana", "r1")
+
+      # ...y no cambia nada: la ventanilla sigue siendo de ana
+      assert f3 == f2
+      assert f3.reservations["r1"].status == :confirmed
+      assert f3.reservations["r1"].seats == [:window]
+      assert f3.available.window == 0
+    end
+
+    test "otro usuario no puede usar un id de reserva que ya existe" do
+      flight = vuelo_base()
+      {:ok, "r1", f1} = Flight.reserve(flight, "ana", "r1")
+
+      assert {:error, :reservation_id_taken} = Flight.reserve(f1, "beto", "r1")
+    end
   end
 
   describe "escenario A/B/C del enunciado" do

@@ -1,7 +1,7 @@
 defmodule LevantarVuelo.FlightServer do
   use GenServer
 
-  alias LevantarVuelo.Flight
+  alias LevantarVuelo.{Flight, SafeCall}
 
   # ---------------------------------------------------------------------------
   # API pública — las funciones que llaman los demás módulos
@@ -12,14 +12,24 @@ defmodule LevantarVuelo.FlightServer do
     GenServer.start_link(__MODULE__, flight_attrs, name: via(flight_attrs.id))
   end
 
+
   def get(flight_id),
-    do: GenServer.call(via(flight_id), :get)
+    do: call(flight_id, :get)
 
   def reserve(flight_id, user_id, reservation_id),
-    do: GenServer.call(via(flight_id), {:reserve, user_id, reservation_id})
+    do: call(flight_id, {:reserve, user_id, reservation_id})
 
   def assign_seats(flight_id, reservation_id, wanted),
-    do: GenServer.call(via(flight_id), {:assign_seats, reservation_id, wanted})
+    do: call(flight_id, {:assign_seats, reservation_id, wanted})
+
+  # Wrapper para manejar los calls y sus errores. Usa SafeCall (compartido con AlertIndex)
+  # asi no mata el proceso que llama si el vuelo no existe, se cae, o su nodo se desconecta.
+  defp call(flight_id, msg) do
+    case SafeCall.call(via(flight_id), msg) do
+      {:error, :noproc} -> {:error, :not_found}      # Para un vuelo, "no hay proceso" es "no existe"
+      other -> other                                 # La respuesta, o :down / :nodedown / :timeout tal cual
+    end
+  end
 
   # ---------------------------------------------------------------------------
   # Callbacks de GenServer
@@ -34,15 +44,16 @@ defmodule LevantarVuelo.FlightServer do
     # después de N milisegundos. Si el proceso se cae y se reinicia, init
     # vuelve a calcular cuánto falta (o cierra en el momento si ya pasó).
     ms = ms_until(flight.offer_ends_at)
-    if ms > 0, do: Process.send_after(self(), :offer_expired, ms)
+    Process.send_after(self(), :offer_expired, ms)
 
     {:ok, flight}
   end
 
-  # Devuelve el estado completo del vuelo (para GET /flights/:id)
+  # Devuelve el estado completo del vuelo (para GET /flights/:id).
+  # Lo envolvemos en {:ok, _} para que get devuelva siempre {:ok, _} | {:error, _}
   @impl true
   def handle_call(:get, _from, flight) do
-    {:reply, flight, flight}
+    {:reply, {:ok, flight}, flight}
   end
 
   # Reserva un lugar. Overbooking permitido, por eso no falla aunque no haya stock.

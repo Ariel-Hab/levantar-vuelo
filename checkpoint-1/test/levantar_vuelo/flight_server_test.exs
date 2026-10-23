@@ -25,15 +25,22 @@ defmodule LevantarVuelo.FlightServerTest do
   end
 
   test "get devuelve el estado del vuelo", %{flight_id: id} do
-    flight = FlightServer.get(id)
+    {:ok, flight} = FlightServer.get(id)
     assert flight.id == id
     assert flight.status == :open
     assert flight.available == %{window: 1, aisle: 1, middle: 0}
   end
 
+  # Antes GenServer.call hacía exit (:noproc) y tiraba abajo al que llamaba
+  test "las operaciones sobre un vuelo que no existe devuelven :not_found" do
+    assert {:error, :not_found} = FlightServer.get("no-existe")
+    assert {:error, :not_found} = FlightServer.reserve("no-existe", "u1", "r1")
+    assert {:error, :not_found} = FlightServer.assign_seats("no-existe", "r1", [:window])
+  end
+
   test "reserve agrega una reserva pendiente", %{flight_id: id} do
     {:ok, "r1"} = FlightServer.reserve(id, "usuario_1", "r1")
-    flight = FlightServer.get(id)
+    {:ok, flight} = FlightServer.get(id)
     assert flight.reservations["r1"].status == :pending
   end
 
@@ -43,7 +50,7 @@ defmodule LevantarVuelo.FlightServerTest do
 
     assert :window in assigned
 
-    flight = FlightServer.get(id)
+    {:ok, flight} = FlightServer.get(id)
     assert flight.reservations["r1"].status == :confirmed
     assert flight.available.window == 0
   end
@@ -73,7 +80,7 @@ defmodule LevantarVuelo.FlightServerTest do
     {:ok, assigned} = FlightServer.assign_seats(id, "rC", [:any])
     assert :aisle in assigned
 
-    flight = FlightServer.get(id)
+    {:ok, flight} = FlightServer.get(id)
     assert {:closed, :sold_out} = flight.status
     assert flight.reservations["rA"].status == :cancelled
   end
@@ -88,7 +95,7 @@ defmodule LevantarVuelo.FlightServerTest do
     FlightServer.reserve("fl_expira", "u1", "r1")
     Process.sleep(150)
 
-    flight = FlightServer.get("fl_expira")
+    {:ok, flight} = FlightServer.get("fl_expira")
     assert {:closed, :expired} = flight.status
     assert flight.reservations["r1"].status == :cancelled
   end

@@ -1,6 +1,8 @@
 defmodule LevantarVuelo.Router do
   use Plug.Router
 
+  require Logger
+
   alias LevantarVuelo.{Alert, AlertIndex, FlightServer}
 
   plug Plug.Parsers,
@@ -29,11 +31,21 @@ defmodule LevantarVuelo.Router do
       capacity: %{window: w, aisle: a, middle: m}
     }
 
-    case FlightServer.start_link(attrs) do
+    case DynamicSupervisor.start_child(LevantarVuelo.DynamicSupervisor,{FlightServer, attrs}) do
       {:ok, _pid} ->
-        # F3: busca usuarios con alertas que coinciden y los notifica
-        flight = FlightServer.get(id)
-        users = AlertIndex.matching_users(flight)
+        # F3: busca usuarios con alertas que coinciden y los notifica.
+        # El vuelo ya está creado: si no podemos consultar las alertas no
+        # fallamos el POST, solo no notificamos (degradación).
+        users =
+          with {:ok, flight} <- FlightServer.get(id),
+               {:ok, users} <- AlertIndex.matching_users(flight) do
+            users
+          else
+            {:error, reason} ->
+              Logger.warning("No se notificaron las alertas del vuelo #{id}: #{inspect(reason)}")
+              []
+          end
+
         notify_flight_published(users, id)
 
         conn
@@ -47,7 +59,7 @@ defmodule LevantarVuelo.Router do
 
   # GET /flights/:id — estado y disponibilidad del vuelo
   get "/flights/:id" do
-    case flight_or_404(conn, id) do
+    case FlightServer.get(id) do
       {:ok, flight} ->
         body = %{
           id: flight.id,
@@ -57,8 +69,8 @@ defmodule LevantarVuelo.Router do
         }
         json(conn, 200, body)
 
-      :not_found ->
-        json(conn, 404, %{error: "vuelo no encontrado"})
+      {:error, reason} ->
+        error_response(conn, reason)
     end
   end
 
@@ -78,14 +90,18 @@ defmodule LevantarVuelo.Router do
       month: parse_month(conn.body_params["month"])
     })
 
-    {:ok, _} = AlertIndex.add(alert)
-    json(conn, 201, %{alert_id: id})
+    case AlertIndex.add(alert) do
+      {:ok, _} -> json(conn, 201, %{alert_id: id})
+      {:error, reason} -> error_response(conn, reason)
+    end
   end
 
   # DELETE /alerts/:id — elimina una alerta
   delete "/alerts/:id" do
-    AlertIndex.remove(id)
-    send_resp(conn, 204, "")
+    case AlertIndex.remove(id) do
+      :ok -> send_resp(conn, 204, "")
+      {:error, reason} -> error_response(conn, reason)
+    end
   end
 
   # --- Reservas ---
@@ -98,8 +114,8 @@ defmodule LevantarVuelo.Router do
       {:ok, rid} ->
         json(conn, 201, %{reservation_id: rid})
 
-      {:error, :flight_closed} ->
-        json(conn, 410, %{error: "vuelo cerrado"})
+      {:error, reason} ->
+        error_response(conn, reason)
     end
   end
 
@@ -114,11 +130,8 @@ defmodule LevantarVuelo.Router do
       {:error, :unavailable, disponibilidad} ->
         json(conn, 409, %{error: "sin disponibilidad", available: disponibilidad})
 
-      {:error, :flight_closed} ->
-        json(conn, 410, %{error: "vuelo cerrado"})
-
       {:error, reason} ->
-        json(conn, 422, %{error: inspect(reason)})
+        error_response(conn, reason)
     end
   end
 
@@ -136,14 +149,18 @@ defmodule LevantarVuelo.Router do
     |> send_resp(status, Jason.encode!(body))
   end
 
-  defp flight_or_404(_conn, id) do
-    case FlightServer.get(id) do
-      nil -> :not_found
-      flight -> {:ok, flight}
-    end
-  rescue
-    _ -> :not_found
-  end
+  # Traduce los errores de los servicios a respuestas HTTP, en un solo lugar.
+  defp error_response(conn, :not_found), do: json(conn, 404, %{error: "vuelo no encontrado"})
+  defp error_response(conn, :flight_closed), do: json(conn, 410, %{error: "vuelo cerrado"})
+
+  # :noproc viene de AlertIndex (lo está reiniciando el supervisor),
+  # :down, :nodedown y :timeout de cualquier servicio. Son fallas transitorias:
+  # el cliente puede reintentar (por eso reserve tiene que ser idempotente).
+  defp error_response(conn, reason) when reason in [:noproc, :down, :nodedown, :timeout],
+    do: json(conn, 503, %{error: "servicio no disponible, reintentá", reason: reason})
+
+  # El resto son errores de negocio (ej. :reservation_not_found)
+  defp error_response(conn, reason), do: json(conn, 422, %{error: inspect(reason)})
 
   defp parse_datetime!(str) do
     {:ok, dt, _} = DateTime.from_iso8601(str)

@@ -1,7 +1,7 @@
 defmodule LevantarVuelo.AlertIndex do
   use GenServer
 
-  alias LevantarVuelo.Alert
+  alias LevantarVuelo.{Alert, SafeCall}
 
   # ---------------------------------------------------------------------------
   # API pública
@@ -13,20 +13,20 @@ defmodule LevantarVuelo.AlertIndex do
 
   @doc "Agrega una alerta al índice. Devuelve {:ok, alert}."
   def add(%Alert{} = alert) do
-    GenServer.call(__MODULE__, {:add, alert})
+    SafeCall.call(__MODULE__, {:add, alert})
   end
 
   @doc "Elimina una alerta por id."
   def remove(alert_id) do
-    GenServer.call(__MODULE__, {:remove, alert_id})
+    SafeCall.call(__MODULE__, {:remove, alert_id})
   end
 
   @doc """
-  Devuelve los user_ids de todos los que tienen una alerta que coincide con el vuelo.
+  Devuelve {:ok, user_ids} de todos los que tienen una alerta que coincide con el vuelo.
   Esto se llama cuando se publica un vuelo nuevo (F3).
   """
   def matching_users(flight) do
-    GenServer.call(__MODULE__, {:matching_users, flight})
+    SafeCall.call(__MODULE__, {:matching_users, flight})
   end
 
   # ---------------------------------------------------------------------------
@@ -59,6 +59,6 @@ defmodule LevantarVuelo.AlertIndex do
       |> Enum.map(& &1.user_id)
       |> Enum.uniq()
 
-    {:reply, users, alerts}
+    {:reply, {:ok, users}, alerts}
   end
 end
