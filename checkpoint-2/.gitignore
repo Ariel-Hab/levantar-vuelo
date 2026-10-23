@@ -22,3 +22,6 @@ erl_crash.dump
 # Ignore package tarball (built via "mix hex.build").
 levantar_vuelo-*.tar
 
+
+# Overrides locales de Docker Compose (dependen de la red de cada uno)
+docker-compose.override.yml

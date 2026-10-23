@@ -18,6 +18,10 @@ COPY lib ./lib
 COPY config ./config
 RUN MIX_ENV=prod mix compile
 
+# El entrypoint arma el nombre del nodo con la IP del contenedor (ver el archivo)
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 EXPOSE 4000
 
-CMD ["mix", "run", "--no-halt"]
+ENTRYPOINT ["/entrypoint.sh"]

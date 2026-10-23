@@ -195,8 +195,8 @@ Si el usuario está conectado al nodo X y el vuelo vive en el nodo Y, `Phoenix.P
 
 Orden pensado para que cada hito se pueda verificar solo.
 
-- [ ] **0. Preparación.** Commitear lo pendiente de `checkpoint-1` (8 archivos modificados, `safe_call.ex` y `router_test.exs` sin trackear). Copiar el proyecto a `checkpoint-2/`.
-- [ ] **1. Cluster por DNS en Docker.**
+- [x] **0. Preparación.** Commitear lo pendiente de `checkpoint-1` (8 archivos modificados, `safe_call.ex` y `router_test.exs` sin trackear). Copiar el proyecto a `checkpoint-2/`.
+- [x] **1. Cluster por DNS en Docker.** Hecho el 23/10. Se resolvió con `docker/entrypoint.sh` (sin `mix release`). `Epmd` para uso local quedó afuera: los tests multi-nodo usarán `:peer`. Verificado: cada nodo ve a los otros dos, y un vuelo creado por nginx solo existe en un nodo (3 de cada 8 GET dan 404), que es lo que arregla el hito 2.
   - Deps `libcluster` y `horde`.
   - `Cluster.Supervisor` con `Cluster.Strategy.DNSPoll` (`query: "app"`, `node_basename: "levantar"`). En local, `Epmd`, elegido por variable de entorno.
   - Cada nodo arranca con `--name levantar@<IP del contenedor>` y la misma cookie (entrypoint o `mix release` con `RELEASE_NODE` y `RELEASE_COOKIE`).
@@ -251,7 +251,6 @@ Orden pensado para que cada hito se pueda verificar solo.
 
 - ¿Réplicas en todos los otros nodos, o 2 elegidos por hash del `flight_id`? Con cluster fijo de 3 da lo mismo, y "todos los otros" es más simple. Se complica si se escala a más de 3.
 - ¿Cómo se registran los miembros de Horde: `NodeObserver` (clase) o `members: :auto`?
-- ¿`mix release` o `mix run` con entrypoint? El release es más prolijo para nombres de nodo y cookie, pero cambia el Dockerfile.
 - ¿Phoenix para LiveDashboard en la entrega final? No hace falta decidirlo ahora. La propuesta original de Ivan (`docs/arquitectura-ivan.html`) asumía Phoenix, así que conviene avisarle de este cambio.
 
 ---

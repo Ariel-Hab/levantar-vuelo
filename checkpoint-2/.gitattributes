@@ -1,0 +1,2 @@
+# El entrypoint corre en Linux: con fin de línea CRLF (Windows) el shebang falla.
+*.sh text eol=lf
