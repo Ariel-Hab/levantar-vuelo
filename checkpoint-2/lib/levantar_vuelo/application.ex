@@ -14,6 +14,8 @@ defmodule LevantarVuelo.Application do
           # members: :auto hace que Horde sume y saque nodos solo, a medida que
           # libcluster los conecta o se caen.
           {Horde.Registry, name: LevantarVuelo.Registry, keys: :unique, members: :auto},
+          # Alertas replicadas en todos los nodos con un CRDT (AP): cada nodo tiene
+          # su copia y se sincronizan solas. Ver AlertIndex.
           LevantarVuelo.AlertIndex,
           # Supervisor distribuido: elige en qué nodo vive cada FlightServer y, si el
           # nodo se cae, lo reinicia en otro. UniformQuorumDistribution además apaga

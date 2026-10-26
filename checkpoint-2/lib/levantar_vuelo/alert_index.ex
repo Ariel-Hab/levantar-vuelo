@@ -1,64 +1,85 @@
 defmodule LevantarVuelo.AlertIndex do
-  use GenServer
+  @moduledoc """
+  Índice de alertas replicado en todos los nodos (AP).
 
-  alias LevantarVuelo.{Alert, SafeCall}
+  Las alertas viven en un DeltaCrdt de tipo AWLWWMap (Add-Wins, Last-Write-Wins):
+  un mapa `alert_id => %Alert{}` que se replica solo. Cada nodo tiene la copia
+  completa. Crear o borrar una alerta escribe en la copia local y responde
+  enseguida; DeltaCrdt manda solo el cambio (el "delta") a los demás nodos en
+  segundo plano, cada 100 ms. Si dos nodos tocan la misma alerta a la vez:
+
+    * uno la borra y otro la escribe → gana la escritura (add-wins)
+    * los dos la escriben distinto → gana la más nueva (last-write-wins)
+
+  Consecuencia: una alerta recién creada en un nodo puede tardar un instante en
+  verse desde otro. Si justo en ese instante se publica un vuelo que coincide,
+  ese usuario no recibe el aviso. Lo aceptamos porque es un aviso, no una venta.
+  A cambio, las alertas siguen funcionando aunque se caigan otros nodos, y un
+  nodo que entra al cluster recibe todas las que ya existían.
+  """
+  use Supervisor
+
+  alias LevantarVuelo.{Alert, CrdtNeighbours, SafeCall}
+
+  # Nombre del DeltaCrdt en cada nodo. Es el mismo en todos: así se encuentran.
+  @crdt LevantarVuelo.AlertIndex.Crdt
 
   # ---------------------------------------------------------------------------
   # API pública
   # ---------------------------------------------------------------------------
 
   def start_link(_opts) do
-    GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
+    Supervisor.start_link(__MODULE__, nil, name: __MODULE__)
   end
 
   @doc "Agrega una alerta al índice. Devuelve {:ok, alert}."
   def add(%Alert{} = alert) do
-    SafeCall.call(__MODULE__, {:add, alert})
+    SafeCall.run(fn ->
+      DeltaCrdt.put(@crdt, alert.id, alert)
+      {:ok, alert}
+    end)
   end
 
   @doc "Elimina una alerta por id."
   def remove(alert_id) do
-    SafeCall.call(__MODULE__, {:remove, alert_id})
+    SafeCall.run(fn ->
+      DeltaCrdt.delete(@crdt, alert_id)
+      :ok
+    end)
   end
 
   @doc """
   Devuelve {:ok, user_ids} de todos los que tienen una alerta que coincide con el vuelo.
-  Esto se llama cuando se publica un vuelo nuevo (F3).
+  Esto se llama cuando se publica un vuelo nuevo (F3). Lee la copia local, no
+  consulta a los otros nodos.
   """
   def matching_users(flight) do
-    SafeCall.call(__MODULE__, {:matching_users, flight})
+    SafeCall.run(fn ->
+      users =
+        DeltaCrdt.to_map(@crdt)
+        |> Map.values()
+        |> Enum.filter(&Alert.matches?(&1, flight))
+        |> Enum.map(& &1.user_id)
+        |> Enum.uniq()
+
+      {:ok, users}
+    end)
   end
 
   # ---------------------------------------------------------------------------
-  # Callbacks
+  # Supervisor
   # ---------------------------------------------------------------------------
 
   @impl true
   def init(_) do
-    # El estado es un mapa: %{alert_id => %Alert{}}
-    {:ok, %{}}
-  end
+    children = [
+      {DeltaCrdt, crdt: DeltaCrdt.AWLWWMap, name: @crdt, sync_interval: 100},
+      {CrdtNeighbours, @crdt}
+    ]
 
-  @impl true
-  def handle_call({:add, alert}, _from, alerts) do
-    {:reply, {:ok, alert}, Map.put(alerts, alert.id, alert)}
-  end
-
-  @impl true
-  def handle_call({:remove, id}, _from, alerts) do
-    {:reply, :ok, Map.delete(alerts, id)}
-  end
-
-  @impl true
-  def handle_call({:matching_users, flight}, _from, alerts) do
-    # Filtramos las alertas que coinciden con el vuelo y devolvemos los user_ids
-    users =
-      alerts
-      |> Map.values()
-      |> Enum.filter(&Alert.matches?(&1, flight))
-      |> Enum.map(& &1.user_id)
-      |> Enum.uniq()
-
-    {:reply, {:ok, users}, alerts}
+    # rest_for_one: si se cae el CRDT se reinicia también CrdtNeighbours, porque
+    # el CRDT nuevo arranca vacío y sin vecinos. Cuando los recibe, los otros
+    # nodos le mandan todas las alertas. (Con un solo nodo, se pierden.)
+    Supervisor.init(children, strategy: :rest_for_one)
   end
 end

@@ -26,7 +26,16 @@ defmodule LevantarVuelo.SafeCall do
   NO se atrapa: let it crash, que lo vea el supervisor y el log.
   """
   def call(server, msg, timeout \\ @default_timeout) do
-    GenServer.call(server, msg, timeout)
+    run(fn -> GenServer.call(server, msg, timeout) end)
+  end
+
+  @doc """
+  Igual que call/3, para cuando el GenServer.call lo hace otra librería por
+  dentro (por ejemplo `DeltaCrdt.put/3`). Ejecuta `fun` y devuelve lo que
+  devuelva, o {:error, motivo} si hace exit por uno de los motivos de arriba.
+  """
+  def run(fun) do
+    fun.()
   catch
     :exit, {:noproc, _} -> {:error, :noproc}
     :exit, {reason, _} when reason in [:normal, :shutdown, :killed] -> {:error, :down}

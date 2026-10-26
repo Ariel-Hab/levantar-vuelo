@@ -41,4 +41,8 @@ defmodule LevantarVuelo.SafeCallTest do
     pid = start_supervised!({Lento, nil})
     assert SafeCall.call(pid, :dormir, 50) == {:error, :timeout}
   end
+
+  test "run/1 atrapa el exit de un call hecho dentro de otra función" do
+    assert SafeCall.run(fn -> GenServer.call(:no_existe, :ping) end) == {:error, :noproc}
+  end
 end

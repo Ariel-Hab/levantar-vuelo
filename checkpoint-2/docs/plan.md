@@ -214,10 +214,12 @@ Orden pensado para que cada hito se pueda verificar solo.
     - `UniformQuorumDistribution` apaga los procesos de un nodo que queda aislado de la mayoría. Hay que tenerlo en cuenta en el hito 4.
     - Se dejó `process_redistribution` en `:passive` (el valor por defecto) a propósito. Con `:active`, Horde mata y reinicia los vuelos cuando entra un nodo nuevo, y hoy eso perdería el estado.
     - `members: :auto` suma **todos los nodos visibles**, no solo los de la app. Un `iex --remsh` o un nodo de diagnóstico se vuelve miembro de Horde. Hay que conectarse con `--hidden`.
-- [ ] **3. Alertas replicadas.**
-  - `AlertIndex` pasa a `DeltaCrdt` (AWLWWMap). `matching_users` lee la copia local.
-  - Los vecinos del CRDT se actualizan con `:net_kernel.monitor_nodes`.
-  - **Verificación:** alerta creada en un nodo, notificación al publicar un vuelo desde otro.
+- [x] **3. Alertas replicadas.** Hecho el 26/10.
+  - `AlertIndex` pasa a ser un `Supervisor` (`rest_for_one`) con dos hijos: el `DeltaCrdt` (AWLWWMap, `sync_interval: 100`) y `CrdtNeighbours`. Si se reinicia el CRDT, también se reinicia `CrdtNeighbours`, porque el CRDT nuevo arranca sin vecinos. La API (`add`, `remove`, `matching_users`) no cambió, así que el `Router` no se tocó. `matching_users` lee la copia local.
+  - `CrdtNeighbours`: los vecinos del CRDT se actualizan con `:net_kernel.monitor_nodes`. Un vecino es `{nombre, nodo}`; si en ese nodo el CRDT todavía no arrancó, DeltaCrdt lo reintenta en cada sincronización.
+  - `SafeCall.run/1`: el mismo manejo de exits que `SafeCall.call/3`, para cuando el `GenServer.call` lo hace una librería por dentro (`DeltaCrdt.put`).
+  - **Verificado en Docker (pegándole a cada nodo por IP):** alerta creada en app-1 → vuelos publicados en app-2 y app-3 notifican a 1 usuario; alerta borrada desde app-3 → un vuelo publicado en app-1 notifica a 0. Al escalar a 4 nodos, el nodo nuevo ya tenía las alertas creadas antes de que existiera.
+  - **Límite aceptado (AP):** una alerta tarda hasta ~100 ms en llegar a los otros nodos. Si en ese lapso se publica un vuelo que coincide desde otro nodo, ese usuario no recibe el aviso.
 - [ ] **4. Réplica con quórum y épocas.** (ver sección 3)
   - `ReplicaStore` por nodo (GenServer + ETS) con `put/3` y `get/1`. Guarda la mayor época vista y rechaza escrituras con época menor (`:stale_epoch`).
   - `FlightServer` replica en `reserve`, `assign_seats` y `:offer_expired` antes de responder. Mensaje `{época, versión, estado}`. Si una réplica contesta `:stale_epoch`, se detiene.

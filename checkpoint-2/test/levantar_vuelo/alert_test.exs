@@ -62,9 +62,11 @@ defmodule LevantarVuelo.AlertIndexTest do
   # El AlertIndex ya está corriendo (lo levantó la Application).
   # Antes de cada test lo vaciamos para que no haya alertas de otros tests.
   setup do
-    # Borramos todas las alertas existentes pidiendo el estado interno
-    alerts = :sys.get_state(AlertIndex)
-    Enum.each(alerts, fn {id, _} -> AlertIndex.remove(id) end)
+    # Borramos todas las alertas existentes leyendo el CRDT por dentro
+    LevantarVuelo.AlertIndex.Crdt
+    |> DeltaCrdt.to_map()
+    |> Map.keys()
+    |> Enum.each(&AlertIndex.remove/1)
     :ok
   end
 
