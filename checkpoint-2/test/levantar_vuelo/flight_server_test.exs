@@ -1,7 +1,7 @@
 defmodule LevantarVuelo.FlightServerTest do
   use ExUnit.Case, async: false
 
-  alias LevantarVuelo.{FlightServer, ReplicaStore}
+  alias LevantarVuelo.{FlightServer, Notifier, ReplicaStore}
 
   # Atributos base para arrancar un FlightServer en los tests
   defp vuelo_attrs(id \\ "fl_test") do
@@ -68,6 +68,7 @@ defmodule LevantarVuelo.FlightServerTest do
   end
 
   test "escenario A/B/C completo a través del proceso", %{flight_id: id} do
+    Notifier.subscribe("A")
     FlightServer.reserve(id, "A", "rA")
     FlightServer.reserve(id, "B", "rB")
 
@@ -83,9 +84,14 @@ defmodule LevantarVuelo.FlightServerTest do
     {:ok, flight} = FlightServer.get(id)
     assert {:closed, :sold_out} = flight.status
     assert flight.reservations["rA"].status == :cancelled
+
+    # A tenía una reserva: se entera de que el vuelo se agotó
+    assert_receive {:notification, {:flight_closed, ^id, :sold_out}}
   end
 
   test "el vuelo se cierra cuando vence el tiempo de oferta" do
+    Notifier.subscribe("u1")
+
     start_supervised!(
       {FlightServer,
        %{vuelo_attrs("fl_expira") | offer_ends_at: DateTime.add(DateTime.utc_now(), 50, :millisecond)}},
@@ -98,6 +104,7 @@ defmodule LevantarVuelo.FlightServerTest do
     {:ok, flight} = FlightServer.get("fl_expira")
     assert {:closed, :expired} = flight.status
     assert flight.reservations["r1"].status == :cancelled
+    assert_receive {:notification, {:flight_closed, "fl_expira", :expired}}
   end
 
   describe "réplica" do

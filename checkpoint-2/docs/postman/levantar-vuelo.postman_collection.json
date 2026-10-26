@@ -263,6 +263,24 @@
       ]
     },
     {
+      "name": "Notificaciones",
+      "item": [
+        {
+          "name": "Escuchar avisos del usuario (SSE)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "La respuesta queda abierta: Postman muestra cada evento a medida que llega (flight_published, flight_closed). El primer comentario dice a que nodo se conecto. Desde la terminal: curl -N {{base_url}}/users/{{user_id}}/events",
+            "url": {
+              "raw": "{{base_url}}/users/{{user_id}}/events",
+              "host": ["{{base_url}}"],
+              "path": ["users", "{{user_id}}", "events"]
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "Control de nodos (puerto 4001)",
       "description": "Plano de control: levanta y baja los contenedores del cluster. Solo acepta contenedores del servicio app. Para probar el failover: 'Donde vive el vuelo' (guarda {{container}}), 'Matar el contenedor del vuelo', otra vez 'Donde vive el vuelo' (otro contenedor, epoca + 1) y 'Levantar todos los nodos parados'.",
       "item": [

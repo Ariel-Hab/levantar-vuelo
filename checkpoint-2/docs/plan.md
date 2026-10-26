@@ -252,11 +252,12 @@ Orden pensado para que cada hito se pueda verificar solo.
     - Leyendo el `ReplicaStore` de cada nodo, los 3 tienen la copia `{3, 5}`, incluido el que acababa de revivir. Eso confirma la re-replicación: en una primera corrida el nodo revivido quedó sin copia, y de ahí salió el reintento.
     - Con 1 solo nodo vivo, reservar da 503 `no_quorum`. Al volver un segundo nodo se puede reservar de nuevo, y la reserva rechazada no quedó guardada.
   - **Visto en Docker, de antes de este hito:** un `POST /flights/:id/reservations` justo después del `POST /flights` puede dar 404 si nginx lo manda a otro nodo, porque `Horde.Registry` tarda un instante en propagar el registro. Ver riesgos.
-- [ ] **5. Notificaciones por SSE.** (ver sección 4)
-  - Dependencia `phoenix_pubsub` y `{Phoenix.PubSub, name: LevantarVuelo.PubSub}` en `application.ex`.
-  - `Notifier` con `Task.Supervisor`: el `FlightServer` solo le manda el mensaje y sigue. El `Notifier` hace `PubSub.broadcast("user:<id>", evento)`. Reemplaza los `Logger.info` del `FlightServer` y del `Router`.
-  - `GET /users/:id/events` en `router.ex`: `send_chunked`, suscripción al topic y loop de `chunk/2`, con un comentario cada pocos segundos para mantener la conexión abierta detrás de nginx. Cubre F3 y F8.
-  - **Verificación:** `curl -N` a un nodo recibe el aviso de un vuelo que vive en otro.
+- [x] **5. Notificaciones por SSE.** Hecho el 26/10. (ver sección 4)
+  - Dependencia `phoenix_pubsub` (2.4.1), y `{Phoenix.PubSub, name: LevantarVuelo.PubSub}` y `{Task.Supervisor, name: LevantarVuelo.NotifierTasks}` en `application.ex`.
+  - `Notifier`: `subscribe(user_id)` y `notify(user_ids, evento)`. El envío corre en una tarea del `Task.Supervisor`, así el `FlightServer` no espera. Hace `PubSub.broadcast("user:<id>", {:notification, evento})` y reemplaza los `Logger.info` del `FlightServer` y del `Router` (el log de cada aviso quedó adentro del `Notifier`).
+  - `SSE`: `GET /users/:id/events` hace `send_chunked`, se suscribe al topic y queda en un loop de `chunk/2`. Primero manda el comentario `: conectado a <nodo>`, y cada 15 s sin avisos un `: ping` para que nginx no corte la conexión. Cuando el cliente se va, el próximo `chunk` falla y el proceso termina. Eventos: `flight_published` (F3) y `flight_closed` con `reason` `sold_out` o `expired`.
+  - **Tests:** entrega por topic, formato SSE, aviso de agotado y de vencido desde el `FlightServer`, y F3 desde el router. El endpoint en sí no tiene test unitario: el adaptador de test de Plug acumula los chunks sin avisar, y el loop no termina.
+  - **Verificado en Docker:** un `curl -N` conectado a `172.20.0.2` recibió los 4 `flight_published` de una alerta (publicados desde distintos nodos por nginx) y el `flight_closed` de un vuelo agotado que vivía en `172.20.0.3`.
 - [ ] **6. Endurecimiento.**
   - `assign_seats` idempotente: reintentar una reserva confirmada devuelve los mismos asientos. Importa porque `SafeCall` puede devolver `:timeout` con el pedido ya aplicado.
   - Límite de mailbox del `FlightServer`.

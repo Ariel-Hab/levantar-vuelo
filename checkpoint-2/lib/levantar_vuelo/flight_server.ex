@@ -3,7 +3,7 @@ defmodule LevantarVuelo.FlightServer do
 
   require Logger
 
-  alias LevantarVuelo.{Flight, ReplicaStore, Replicas, SafeCall}
+  alias LevantarVuelo.{Flight, Notifier, ReplicaStore, Replicas, SafeCall}
 
   # Cada cuánto se reintenta algo que falló por falta de quórum de réplicas
   @retry_ms 1_000
@@ -131,7 +131,7 @@ defmodule LevantarVuelo.FlightServer do
 
     case commit(state, closed_flight) do
       {:ok, state} ->
-        notify_users(cancelled_users, {:flight_closed, closed_flight.id, :expired})
+        Notifier.notify(cancelled_users, {:flight_closed, closed_flight.id, :expired})
         {:noreply, state}
 
       # Sin quórum el vuelo sigue abierto hasta que se pueda confirmar el cierre
@@ -291,13 +291,6 @@ defmodule LevantarVuelo.FlightServer do
       |> Enum.map(& &1.user_id)
       |> Enum.uniq()
 
-    notify_users(users, {:flight_closed, flight.id, :sold_out})
-  end
-
-  # Por ahora solo logueamos. Después acá irá el PubSub para SSE/WebSocket.
-  defp notify_users(users, event) do
-    Enum.each(users, fn user_id ->
-      Logger.info("Notificando a #{user_id}: #{inspect(event)}")
-    end)
+    Notifier.notify(users, {:flight_closed, flight.id, :sold_out})
   end
 end

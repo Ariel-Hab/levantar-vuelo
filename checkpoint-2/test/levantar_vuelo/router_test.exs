@@ -29,6 +29,19 @@ defmodule LevantarVuelo.RouterTest do
     assert conn.status == 409
   end
 
+  test "POST /flights avisa a los usuarios con una alerta que coincide (F3)" do
+    LevantarVuelo.AlertIndex.add(
+      LevantarVuelo.Alert.new(%{id: "a_router", user_id: "u_router", origin: "EZE",
+                                destination: "MAD", date: nil, month: nil})
+    )
+
+    LevantarVuelo.Notifier.subscribe("u_router")
+    conn = conn(:post, "/flights", %{@vuelo | id: "fl_router_alerta"}) |> Router.call(@opts)
+
+    assert Jason.decode!(conn.resp_body)["notified_users"] >= 1
+    assert_receive {:notification, {:flight_published, "fl_router_alerta"}}
+  end
+
   test "GET /flights/:id/location dice en qué nodo vive el vuelo" do
     conn(:post, "/flights", %{@vuelo | id: "fl_router_location"}) |> Router.call(@opts)
 

@@ -3,7 +3,7 @@ defmodule LevantarVuelo.Router do
 
   require Logger
 
-  alias LevantarVuelo.{Alert, AlertIndex, Flight, FlightServer}
+  alias LevantarVuelo.{Alert, AlertIndex, Flight, FlightServer, Notifier, SSE}
 
   plug Plug.Parsers,
     parsers: [:json],
@@ -50,7 +50,7 @@ defmodule LevantarVuelo.Router do
               []
           end
 
-        notify_flight_published(users, id)
+        Notifier.notify(users, {:flight_published, id})
 
         conn
         |> put_resp_content_type("application/json")
@@ -164,6 +164,14 @@ defmodule LevantarVuelo.Router do
     end
   end
 
+  # --- Notificaciones ---
+
+  # GET /users/:user_id/events — avisos al usuario por SSE (F3 y cierres de
+  # vuelo). La respuesta queda abierta: probar con `curl -N`.
+  get "/users/:user_id/events" do
+    SSE.stream(conn, user_id)
+  end
+
   match _ do
     send_resp(conn, 404, "not found")
   end
@@ -224,12 +232,5 @@ defmodule LevantarVuelo.Router do
     else
       _ -> nil
     end
-  end
-
-  defp notify_flight_published(users, flight_id) do
-    require Logger
-    Enum.each(users, fn uid ->
-      Logger.info("Notificando a #{uid}: nuevo vuelo #{flight_id}")
-    end)
   end
 end

@@ -26,7 +26,8 @@ defmodule LevantarVuelo.MixProject do
       {:bandit, "~> 1.5"},
       {:jason, "~> 1.4"},
       {:libcluster, "~> 3.5"},
-      {:horde, "~> 0.9.0"}
+      {:horde, "~> 0.9.0"},
+      {:phoenix_pubsub, "~> 2.1"}
     ]
   end
 end
