@@ -97,14 +97,16 @@ Cae el nodo A  →  Horde arranca el FlightServer del vuelo en el nodo B
 
 Por qué hace falta leer de 2 nodos: la escritura llegó a 2 de 3 y la lectura toca 2 de 3, así que **siempre se solapan en al menos un nodo**, y ese nodo tiene la versión confirmada más nueva (R + W > N, con N = 3).
 
-### Re-replicación
+### Límite: sin re-replicación
 
-El primario anota qué nodos **confirmaron** tener la copia de la versión actual. Si a alguno de los 3 que la deberían tener le falta, se la reenvía cada 1 s hasta que la tenga. Pasa en dos casos:
+Las copias solo se escriben cuando el vuelo cambia. No hay nada que complete copias que faltan:
 
-- **Entra un nodo** (escalado, o vuelve uno caído): puede pasar a ser uno de los 3 de un vuelo. La VM de Erlang se conecta al cluster unos segundos antes de que arranque la aplicación, así que el primer envío suele fallar; el reintento lo completa.
-- **Sale un nodo**: deja de contar como réplica (si vuelve, vuelve vacío), y con más de 3 nodos otro pasa a ser uno de los 3.
+- **Vuelve un nodo caído:** vuelve con el `ReplicaStore` vacío, y recién recibe la copia de un vuelo con la próxima escritura de ese vuelo.
+- **Entra un nodo nuevo** (por ejemplo, de 3 a 4): puede pasar a ser uno de los 3 de un vuelo sin tener su copia.
 
-Sin esto, después de un cambio de nodos una recuperación podría leer justo de 2 nodos sin la última copia.
+Mientras tanto, ese vuelo tiene una copia menos de la que debería. Si en ese lapso se cae otro nodo, la lectura de recuperación puede tocar justo 2 nodos sin la última copia y perder datos. Para no perder nada hay que esperar a la próxima escritura entre una caída y la siguiente.
+
+Se implementó una re-replicación (el primario reenviaba la copia a los nodos que faltaban, cada 1 s, al entrar o salir un nodo) y se sacó para simplificar el `FlightServer` (26/10). En sistemas reales esto se llama *anti-entropía* o *read repair*.
 
 ### Épocas (fencing)
 
@@ -238,18 +240,17 @@ Orden pensado para que cada hito se pueda verificar solo.
   - **Límite aceptado (AP):** una alerta tarda hasta ~100 ms en llegar a los otros nodos. Si en ese lapso se publica un vuelo que coincide desde otro nodo, ese usuario no recibe el aviso.
 - [x] **4. Réplica con quórum y épocas.** Hecho el 26/10. (ver sección 3)
   - `Replicas`: elige los 3 nodos de cada vuelo con rendezvous hashing y lee factor y quórums de la config. Se descartó libring: su `key_to_nodes/3` no da la vuelta al anillo y, con 3 nodos, 61 de cada 10.000 vuelos recibían 1 o 2 nodos en vez de 3 (hay un test que lo cubre).
-  - `ReplicaStore` por nodo: GenServer con un mapa (sin ETS: todos los accesos llegan por `multi_call`). `replicate/4` exige quórum; `put_all/4` no, y se usa para completar copias. Guarda la mayor `{época, versión}` y rechaza épocas menores (`:stale_epoch`).
+  - `ReplicaStore` por nodo: GenServer con un mapa (sin ETS: todos los accesos llegan por `multi_call`). `replicate/4` exige quórum y devuelve qué nodos guardaron la copia. Guarda la mayor `{época, versión}` y rechaza épocas menores (`:stale_epoch`).
   - `FlightServer` replica en `reserve`, `assign_seats` y `:offer_expired` antes de responder. Si el estado no cambió (reserva reintentada) no replica. Si una réplica contesta `:stale_epoch`, se detiene con `{:shutdown, :stale_epoch}`.
   - La recuperación corre en `handle_continue` (no en `init`). Sin quórum el proceso **no se cae**: contesta 503 y reintenta cada 1 s. Si se cayera, Horde lo reiniciaría en loop.
-  - Re-replicación cuando entra o sale un nodo (sección 3).
+  - Sin re-replicación: se implementó y se sacó para simplificar (sección 3, "Límite: sin re-replicación").
   - De paso: `:offer_expired` sobre un vuelo ya agotado lo pasaba de `{:closed, :sold_out}` a `{:closed, :expired}`. Ahora se ignora.
   - Router: `:no_quorum` y `:stale_epoch` dan 503.
-  - `GET /flights/:id/location` (también en la colección de Postman): contenedor donde vive el vuelo, época, versión y contenedores con copia. El nombre sale del DNS de Docker al revés (IP → contenedor) con `:inet_res`, porque `:inet` mira antes `/etc/hosts` y para la IP propia devuelve el ID del contenedor. Verificado: antes de matar el contenedor, app-1 con época 1 y 3 copias; después, app-2 con época 2 y 2 copias; al revivir app-1, 3 copias otra vez.
+  - `GET /flights/:id/location` (también en la colección de Postman): contenedor donde vive el vuelo, época, versión y contenedores con copia. El nombre sale del DNS de Docker al revés (IP → contenedor) con `:inet_res`, porque `:inet` mira antes `/etc/hosts` y para la IP propia devuelve el ID del contenedor. Verificado: antes de matar el contenedor, app-1 con época 1 y 3 copias; después, app-2 con época 2 y 2 copias. Sin re-replicación, app-1 revivido vuelve a figurar recién con la próxima escritura.
   - **Tests (52, un solo nodo con factor 1):** reglas de época y versión del `ReplicaStore`, elección de nodos (cantidad, determinismo, estabilidad), recuperación tras matar el proceso (mismas reservas, época 1 → 2) y fencing (el primario viejo recibe `:stale_epoch`, se detiene y no confirma nada).
   - **Verificado en Docker (3 nodos):**
     - Al matar el nodo de un vuelo con 3 escrituras, vuelve a responder en ~200 ms (en el hito 2 eran 1,2 a 1,5 s), en otro nodo, con época 2 y versión 3.
     - Con 2 nodos se sigue escribiendo. Después de revivir el nodo caído y matar al segundo primario, el vuelo vuelve con época 3, versión 5 y las 3 reservas.
-    - Leyendo el `ReplicaStore` de cada nodo, los 3 tienen la copia `{3, 5}`, incluido el que acababa de revivir. Eso confirma la re-replicación: en una primera corrida el nodo revivido quedó sin copia, y de ahí salió el reintento.
     - Con 1 solo nodo vivo, reservar da 503 `no_quorum`. Al volver un segundo nodo se puede reservar de nuevo, y la reserva rechazada no quedó guardada.
   - **Visto en Docker, de antes de este hito:** un `POST /flights/:id/reservations` justo después del `POST /flights` puede dar 404 si nginx lo manda a otro nodo, porque `Horde.Registry` tarda un instante en propagar el registro. Ver riesgos.
 - [x] **5. Notificaciones por SSE.** Hecho el 26/10. (ver sección 4)

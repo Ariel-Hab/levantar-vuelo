@@ -62,13 +62,10 @@ defmodule LevantarVuelo.FlightServer do
   #   attrs:    los datos con los que se creó el vuelo (Horde los vuelve a pasar al reiniciarlo)
   #   epoch:    la época de este primario (ver ReplicaStore)
   #   version:  el número del último cambio
-  #   replicas: los nodos que confirmaron tener la copia de esta versión
+  #   replicas: los nodos que guardaron la última escritura (para /location)
 
   @impl true
   def init(flight_attrs) do
-    # Para enterarnos si entra o sale un nodo: puede cambiar dónde van las copias
-    :net_kernel.monitor_nodes(true)
-
     state = %{flight: nil, attrs: flight_attrs, epoch: 0, version: 0, replicas: []}
 
     # Recuperar el vuelo implica hablar con otros nodos. Lo hacemos en
@@ -171,38 +168,6 @@ defmodule LevantarVuelo.FlightServer do
   # Ya estaba cerrado (se agotó antes de que venza la oferta): no hay nada que hacer
   def handle_info(:offer_expired, state), do: {:noreply, state}
 
-  # Entró o salió un nodo: puede cambiar dónde van las copias de este vuelo.
-  # Un nodo que se cae deja de contar como réplica: si vuelve, vuelve vacío.
-  def handle_info({:nodedown, node}, state) do
-    Process.send_after(self(), :check_replicas, @retry_ms)
-    {:noreply, %{state | replicas: List.delete(state.replicas, node)}}
-  end
-
-  def handle_info({:nodeup, _node}, state) do
-    Process.send_after(self(), :check_replicas, @retry_ms)
-    {:noreply, state}
-  end
-
-  def handle_info(:check_replicas, %{flight: nil} = state), do: {:noreply, state}
-
-  # Si a algún nodo que debería tener la copia le falta, se la mandamos (con el
-  # mismo sello: no es un cambio del vuelo). Sin esto, al escalar a más nodos
-  # o al volver un nodo caído, una recuperación podría leer justo de nodos sin copia.
-  def handle_info(:check_replicas, state) do
-    target = Replicas.nodes_for(state.flight.id)
-
-    case target -- state.replicas do
-      [] ->
-        {:noreply, state}
-
-      missing ->
-        case ReplicaStore.put_all(missing, state.flight.id, {state.epoch, state.version}, state.flight) do
-          {:ok, saved} -> {:noreply, track_replicas(state, state.replicas ++ saved, target)}
-          {:error, :stale_epoch} -> {:stop, {:shutdown, :stale_epoch}, state}
-        end
-    end
-  end
-
   def handle_info(:recover, state), do: recover(state)
 
   # ---------------------------------------------------------------------------
@@ -216,15 +181,14 @@ defmodule LevantarVuelo.FlightServer do
   #   3. "Reclama" el vuelo: copia el estado con la época nueva a quórum. Desde
   #      ahí, esas réplicas rechazan las escrituras de cualquier primario anterior.
   defp recover(%{attrs: attrs} = state) do
-    target = Replicas.nodes_for(attrs.id)
+    replicas = Replicas.nodes_for(attrs.id)
 
-    with {:ok, latest} <- ReplicaStore.fetch_latest(target, attrs.id),
+    with {:ok, latest} <- ReplicaStore.fetch_latest(replicas, attrs.id),
          {{epoch, version}, flight} = latest || {{0, 0}, Flight.new(attrs)},
-         {:ok, saved} <- ReplicaStore.replicate(target, attrs.id, {epoch + 1, version}, flight) do
+         {:ok, saved} <- ReplicaStore.replicate(replicas, attrs.id, {epoch + 1, version}, flight) do
       Logger.info("Vuelo #{attrs.id} activo en #{node()}: época #{epoch + 1}, versión #{version}")
       schedule_offer_end(flight)
-      state = %{state | flight: flight, epoch: epoch + 1, version: version}
-      {:noreply, track_replicas(state, saved, target)}
+      {:noreply, %{state | flight: flight, epoch: epoch + 1, version: version, replicas: saved}}
     else
       # CP: sin quórum no sabemos si tenemos lo último. Hasta que vuelva, contesta 503.
       {:error, :no_quorum} ->
@@ -247,28 +211,17 @@ defmodule LevantarVuelo.FlightServer do
 
   defp commit(state, new_flight) do
     version = state.version + 1
-    target = Replicas.nodes_for(new_flight.id)
+    replicas = Replicas.nodes_for(new_flight.id)
 
-    case ReplicaStore.replicate(target, new_flight.id, {state.epoch, version}, new_flight) do
+    case ReplicaStore.replicate(replicas, new_flight.id, {state.epoch, version}, new_flight) do
       {:ok, saved} ->
-        {:ok, track_replicas(%{state | flight: new_flight, version: version}, saved, target)}
+        {:ok, %{state | flight: new_flight, version: version, replicas: saved}}
 
       # El cambio NO se adopta. La versión avanza igual: alguna réplica pudo
       # guardarlo, y el próximo cambio no puede reusar ese número con otro contenido.
       {:error, reason} ->
         {:not_committed, reason, %{state | version: version}}
     end
-  end
-
-  # Anota qué nodos tienen la copia actual. Si a alguno de los que deberían
-  # tenerla le falta (ej. un nodo recién conectado que todavía no levantó su
-  # ReplicaStore), se reintenta más tarde con :check_replicas.
-  defp track_replicas(state, saved, target) do
-    if target -- saved != [] do
-      Process.send_after(self(), :check_replicas, @retry_ms)
-    end
-
-    %{state | replicas: saved}
   end
 
   # Límite del mailbox (load shedding). Cada escritura espera a las réplicas,

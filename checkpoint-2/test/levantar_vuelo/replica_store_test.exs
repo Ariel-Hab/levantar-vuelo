@@ -39,10 +39,9 @@ defmodule LevantarVuelo.ReplicaStoreTest do
     assert ReplicaStore.fetch_latest(nodes, id) == {:ok, {{1, 3}, :v3}}
   end
 
-  # El FlightServer lo usa para saber a quién reenviarle la copia más tarde
+  # Es lo que muestra GET /flights/:id/location como réplicas
   test "devuelve qué nodos guardaron la copia", %{id: id} do
     assert ReplicaStore.replicate([node(), :"nadie@ningun-lado"], id, {1, 1}, :v1) == {:ok, [node()]}
-    assert ReplicaStore.put_all([:"nadie@ningun-lado"], id, {1, 1}, :v1) == {:ok, []}
   end
 
   test "si no contestan suficientes nodos no confirma ni lee", %{id: id} do

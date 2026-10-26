@@ -31,25 +31,15 @@ defmodule LevantarVuelo.ReplicaStore do
   `{:error, :no_quorum}` si contestaron menos.
   """
   def replicate(nodes, flight_id, stamp, flight) do
-    with {:ok, saved} <- put_all(nodes, flight_id, stamp, flight) do
-      if length(saved) >= Replicas.write_quorum(), do: {:ok, saved}, else: {:error, :no_quorum}
-    end
-  end
-
-  @doc """
-  Como replicate/4 pero sin exigir quórum: para completar copias que faltan.
-  Devuelve `{:ok, nodos_que_la_guardaron}` o `{:error, :stale_epoch}`.
-  """
-  def put_all(nodes, flight_id, stamp, flight) do
     # multi_call manda el pedido a todos los nodos a la vez y espera hasta el
     # timeout. Los nodos caídos o sin ReplicaStore (todavía arrancando) no contestan.
     {replies, _sin_respuesta} =
       GenServer.multi_call(nodes, __MODULE__, {:put, flight_id, stamp, flight}, Replicas.timeout())
 
-    if Enum.any?(replies, &match?({_node, {:error, :stale_epoch}}, &1)) do
-      {:error, :stale_epoch}
-    else
-      {:ok, Enum.map(replies, fn {node, :ok} -> node end)}
+    cond do
+      Enum.any?(replies, &match?({_node, {:error, :stale_epoch}}, &1)) -> {:error, :stale_epoch}
+      length(replies) >= Replicas.write_quorum() -> {:ok, Enum.map(replies, &elem(&1, 0))}
+      true -> {:error, :no_quorum}
     end
   end
 
