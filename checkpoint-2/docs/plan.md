@@ -54,43 +54,57 @@ Cuando un nodo cae, Horde revive el `FlightServer` en otro nodo, pero vacío. Pa
 
 ### Cómo funciona
 
-Cada nodo tiene un `ReplicaStore`: un GenServer con una tabla ETS donde guarda copias de vuelos de otros nodos. Es pasivo, solo guarda y devuelve.
+Cada nodo tiene un `ReplicaStore`: un GenServer que guarda copias de vuelos (de cualquier nodo, incluido el propio). Es pasivo, solo guarda y devuelve.
+
+Cada vuelo se copia en **3 nodos** (el *factor*), elegidos por `Replicas.nodes_for/1` con rendezvous hashing: cada nodo recibe el puntaje `hash({flight_id, nodo})` y ganan los 3 más altos. Todos los nodos calculan lo mismo sin hablar entre ellos, y cuando entra o sale un nodo solo se mueven las copias de los vuelos afectados. Con 3 nodos son los 3; con más, 3 de ellos. El nodo donde Horde puso al `FlightServer` no tiene por qué estar entre los 3: el quórum se cuenta sobre los `ReplicaStore`.
 
 ```
 Escritura (reserve / assign_seats / close):
 
-  FlightServer (primario, nodo A)
+  FlightServer (primario)
     1. calcula el estado nuevo con Flight (módulo puro)
     2. version = version + 1
-    3. manda {flight_id, {epoca, version}, estado} a ReplicaStore de B y de C
-    4. espera acks
-    5. si llegó al menos 1 ack → "commit": guarda el estado y responde 200
-       si no llegó ninguno → NO guarda el estado, responde 503
+    3. manda {flight_id, {epoca, version}, estado} a los ReplicaStore de los 3 nodos
+    4. espera las respuestas (GenServer.multi_call, timeout 1 s)
+    5. si guardaron al menos 2 → "commit": adopta el estado y responde 200
+       si guardaron menos → NO adopta el estado, responde 503 (la versión avanza igual)
        si una réplica contesta :stale_epoch → este primario ya no es el vigente:
-         se detiene (let it crash) y responde 503
+         se detiene con {:shutdown, :stale_epoch} (Horde no lo reinicia) y responde 503
 ```
 
-Con 3 nodos, el **quórum es 2**: el primario más un ack. Es la mayoría de 3.
+El **quórum de escritura es 2**, la mayoría de 3. Factor y quórums están en `config/config.exs`.
 
 - **Consecuencia 1:** toda compra confirmada vive en al menos 2 nodos. Si cae cualquiera de los 3, queda al menos una copia.
-- **Consecuencia 2 (CP):** si el primario no logra el ack, rechaza la operación. Preferimos un 503 antes que confirmar algo que se puede perder.
+- **Consecuencia 2 (CP):** si no se llega a 2 copias, se rechaza la operación. Preferimos un 503 antes que confirmar algo que se puede perder.
 
 ### Recuperación (failover)
 
 ```
 Cae el nodo A  →  Horde arranca el FlightServer del vuelo en el nodo B
 
-  init/1 de B:
-    1. pide a los ReplicaStore alcanzables la copia del vuelo
-    2. si contestan al menos 2 nodos, se queda con la de mayor {epoca, version}
-       (se compara primero la época y después la versión)
-    3. si contestan menos de 2, no arranca (503): no sabe si tiene lo último
+  init/1 de B: se suscribe a nodeup/nodedown y sigue en handle_continue
+  (para no frenar a Horde mientras habla con otros nodos):
+    1. pide la copia del vuelo a los ReplicaStore de sus 3 nodos
+    2. si contestan al menos 2, se queda con la de mayor {epoca, version}
+       (se compara primero la época y después la versión). Si nadie la tiene,
+       es un vuelo nuevo: arranca de cero con los attrs
+    3. si contestan menos de 2, contesta 503 a todo y reintenta cada 1 s:
+       no sabe si tiene lo último
     4. epoca = epoca_máxima_vista + 1
     5. "reclama" el vuelo: replica el estado recuperado con la época nueva a quórum
     6. recién ahí empieza a atender pedidos
 ```
 
 Por qué hace falta leer de 2 nodos: la escritura llegó a 2 de 3 y la lectura toca 2 de 3, así que **siempre se solapan en al menos un nodo**, y ese nodo tiene la versión confirmada más nueva (R + W > N, con N = 3).
+
+### Re-replicación
+
+El primario anota qué nodos **confirmaron** tener la copia de la versión actual. Si a alguno de los 3 que la deberían tener le falta, se la reenvía cada 1 s hasta que la tenga. Pasa en dos casos:
+
+- **Entra un nodo** (escalado, o vuelve uno caído): puede pasar a ser uno de los 3 de un vuelo. La VM de Erlang se conecta al cluster unos segundos antes de que arranque la aplicación, así que el primer envío suele fallar; el reintento lo completa.
+- **Sale un nodo**: deja de contar como réplica (si vuelve, vuelve vacío), y con más de 3 nodos otro pasa a ser uno de los 3.
+
+Sin esto, después de un cambio de nodos una recuperación podría leer justo de 2 nodos sin la última copia.
 
 ### Épocas (fencing)
 
@@ -108,11 +122,13 @@ Quedan afuera de este diseño los fallos bizantinos y la pérdida de más de un 
 
 **Detalle a tener en cuenta.** Un primario viejo puede haber escrito en 1 sola réplica (sin quórum) y haber respondido 503. Ese estado puede aparecer en la recuperación y adoptarse, aunque el cliente nunca recibió confirmación. Es equivalente a un `:timeout` con el pedido aplicado, y lo cubre la idempotencia del hito 6.
 
+**Lecturas.** `GET /flights/:id` lee de la memoria del primario, sin quórum. El primario solo adopta estados confirmados, así que es lo último que confirmó *él*. En una partición, un primario aislado sigue contestando lecturas aunque del otro lado ya haya uno nuevo, y esas lecturas pueden estar viejas. Las escrituras no: necesitan quórum.
+
 **Qué agrega al código:**
 
 - Un campo `epoch` en el estado del `FlightServer`.
-- La comparación `{época, versión}` en `ReplicaStore.put/3` y en el desempate de `init`.
-- Un paso extra en `init` (el reclamo del punto 5). Es una sola ida y vuelta al arrancar, no en cada escritura.
+- La comparación `{época, versión}` en el `put` del `ReplicaStore` y en el desempate de la recuperación.
+- Un paso extra en la recuperación (el reclamo del punto 5). Es una sola ida y vuelta al arrancar, no en cada escritura.
 - Un test de fencing: dos primarios para el mismo vuelo, el viejo recibe `:stale_epoch` y se detiene.
 
 El módulo puro `Flight` no cambia.
@@ -220,12 +236,21 @@ Orden pensado para que cada hito se pueda verificar solo.
   - `SafeCall.run/1`: el mismo manejo de exits que `SafeCall.call/3`, para cuando el `GenServer.call` lo hace una librería por dentro (`DeltaCrdt.put`).
   - **Verificado en Docker (pegándole a cada nodo por IP):** alerta creada en app-1 → vuelos publicados en app-2 y app-3 notifican a 1 usuario; alerta borrada desde app-3 → un vuelo publicado en app-1 notifica a 0. Al escalar a 4 nodos, el nodo nuevo ya tenía las alertas creadas antes de que existiera.
   - **Límite aceptado (AP):** una alerta tarda hasta ~100 ms en llegar a los otros nodos. Si en ese lapso se publica un vuelo que coincide desde otro nodo, ese usuario no recibe el aviso.
-- [ ] **4. Réplica con quórum y épocas.** (ver sección 3)
-  - `ReplicaStore` por nodo (GenServer + ETS) con `put/3` y `get/1`. Guarda la mayor época vista y rechaza escrituras con época menor (`:stale_epoch`).
-  - `FlightServer` replica en `reserve`, `assign_seats` y `:offer_expired` antes de responder. Mensaje `{época, versión, estado}`. Si una réplica contesta `:stale_epoch`, se detiene.
-  - `init` recupera la mayor `{época, versión}` con lectura de 2 nodos (o no arranca), sube la época y reclama el vuelo en un quórum antes de atender.
-  - **Verificación:** matar el nodo primario de un vuelo con reservas, el vuelo reaparece en otro nodo con las mismas reservas y con la época incrementada.
-  - **Test de fencing:** dos primarios para el mismo vuelo, el viejo recibe `:stale_epoch` y se detiene sin confirmar nada.
+- [x] **4. Réplica con quórum y épocas.** Hecho el 26/10. (ver sección 3)
+  - `Replicas`: elige los 3 nodos de cada vuelo con rendezvous hashing y lee factor y quórums de la config. Se descartó libring: su `key_to_nodes/3` no da la vuelta al anillo y, con 3 nodos, 61 de cada 10.000 vuelos recibían 1 o 2 nodos en vez de 3 (hay un test que lo cubre).
+  - `ReplicaStore` por nodo: GenServer con un mapa (sin ETS: todos los accesos llegan por `multi_call`). `replicate/4` exige quórum; `put_all/4` no, y se usa para completar copias. Guarda la mayor `{época, versión}` y rechaza épocas menores (`:stale_epoch`).
+  - `FlightServer` replica en `reserve`, `assign_seats` y `:offer_expired` antes de responder. Si el estado no cambió (reserva reintentada) no replica. Si una réplica contesta `:stale_epoch`, se detiene con `{:shutdown, :stale_epoch}`.
+  - La recuperación corre en `handle_continue` (no en `init`). Sin quórum el proceso **no se cae**: contesta 503 y reintenta cada 1 s. Si se cayera, Horde lo reiniciaría en loop.
+  - Re-replicación cuando entra o sale un nodo (sección 3).
+  - De paso: `:offer_expired` sobre un vuelo ya agotado lo pasaba de `{:closed, :sold_out}` a `{:closed, :expired}`. Ahora se ignora.
+  - Router: `:no_quorum` y `:stale_epoch` dan 503.
+  - **Tests (52, un solo nodo con factor 1):** reglas de época y versión del `ReplicaStore`, elección de nodos (cantidad, determinismo, estabilidad), recuperación tras matar el proceso (mismas reservas, época 1 → 2) y fencing (el primario viejo recibe `:stale_epoch`, se detiene y no confirma nada).
+  - **Verificado en Docker (3 nodos):**
+    - Al matar el nodo de un vuelo con 3 escrituras, vuelve a responder en ~200 ms (en el hito 2 eran 1,2 a 1,5 s), en otro nodo, con época 2 y versión 3.
+    - Con 2 nodos se sigue escribiendo. Después de revivir el nodo caído y matar al segundo primario, el vuelo vuelve con época 3, versión 5 y las 3 reservas.
+    - Leyendo el `ReplicaStore` de cada nodo, los 3 tienen la copia `{3, 5}`, incluido el que acababa de revivir. Eso confirma la re-replicación: en una primera corrida el nodo revivido quedó sin copia, y de ahí salió el reintento.
+    - Con 1 solo nodo vivo, reservar da 503 `no_quorum`. Al volver un segundo nodo se puede reservar de nuevo, y la reserva rechazada no quedó guardada.
+  - **Visto en Docker, de antes de este hito:** un `POST /flights/:id/reservations` justo después del `POST /flights` puede dar 404 si nginx lo manda a otro nodo, porque `Horde.Registry` tarda un instante en propagar el registro. Ver riesgos.
 - [ ] **5. Notificaciones por SSE.** (ver sección 4)
   - Dependencia `phoenix_pubsub` y `{Phoenix.PubSub, name: LevantarVuelo.PubSub}` en `application.ex`.
   - `Notifier` con `Task.Supervisor`: el `FlightServer` solo le manda el mensaje y sigue. El `Notifier` hace `PubSub.broadcast("user:<id>", evento)`. Reemplaza los `Logger.info` del `FlightServer` y del `Router`.
@@ -251,6 +276,7 @@ Orden pensado para que cada hito se pueda verificar solo.
 | Descubrimiento de nodos | `libcluster` con `DNSPoll` |
 | Registro y supervisión distribuidos | `Horde` con `UniformQuorumDistribution` |
 | Persistencia del estado | Réplica con quórum (sin base de datos) |
+| Dónde van las réplicas | Factor 3 por rendezvous hashing, quórum de escritura y de lectura 2 (decidido el 26/10, pensando en escalar a más de 3 nodos) |
 | Épocas (fencing) | Incluidas en el checkpoint 2: cierran la ventana de doble primario y cuestan poco |
 | Capa web | Se mantiene Plug + Bandit (decidido el 23/10). Phoenix se evaluó y se descartó: su estructura no aporta a la distribución |
 | Notificaciones | SSE con Plug + `Phoenix.PubSub` distribuido |
@@ -258,7 +284,6 @@ Orden pensado para que cada hito se pueda verificar solo.
 
 **Abiertas (a definir en el hito correspondiente):**
 
-- ¿Réplicas en todos los otros nodos, o 2 elegidos por hash del `flight_id`? Con cluster fijo de 3 da lo mismo, y "todos los otros" es más simple. Se complica si se escala a más de 3.
 - ¿Phoenix para LiveDashboard en la entrega final? No hace falta decidirlo ahora. La propuesta original de Ivan (`docs/arquitectura-ivan.html`) asumía Phoenix, así que conviene avisarle de este cambio.
 
 ---
@@ -266,7 +291,8 @@ Orden pensado para que cada hito se pueda verificar solo.
 ## 7. Riesgos
 
 - **Tiempo.** El hito 4 es el más grande. Si no entra completo, el orden permite entregar 0 a 3 y 5 funcionando y documentar la réplica del hito 4 como pendiente. Si hay que recortar dentro del hito 4, se recorta primero el test de caos, no las épocas.
-- **Reclamo en `init`.** Si no hay quórum al arrancar, el vuelo queda sin actor y devuelve 503 hasta que vuelvan los nodos. Es intencional (CP), pero hay que cubrirlo con un test.
+- **Reclamo al arrancar.** Si no hay quórum, el vuelo contesta 503 y reintenta cada 1 s hasta que vuelvan los nodos. Es intencional (CP). Verificado en Docker para escrituras; falta un test automático, que necesita varios nodos (hito 7).
+- **404 justo después de crear un vuelo.** `Horde.Registry` propaga el registro con un CRDT, así que durante un instante los otros nodos no encuentran el vuelo recién creado y un pedido que llega por otro nodo da 404. Opciones: bajar el `sync_interval` del registro (lo achica, no lo elimina) o que el router reintente un `:not_found` durante unos cientos de ms. Para el hito 6.
 - **Docker + nombres de nodo.** `DNSPoll` arma nombres `basename@IP`. Si el nombre del nodo no coincide con eso, los nodos no se conectan. Se verifica en el hito 1 antes de seguir.
 - **SSE detrás de nginx.** Si nginx bufferea la respuesta o corta conexiones inactivas, el cliente no recibe los eventos. Se verifica en el hito 1 con un `curl -N` a través de nginx.
 - **Vuelo reiniciado sin registrar (sin explicar).** En una corrida de prueba, tras matar el nodo, Horde reinició el `FlightServer` en otro nodo pero la tabla de claves de `Horde.Registry` quedó vacía: el proceso vivía y nadie lo encontraba por nombre (siempre 404). No se pudo reproducir en 5 intentos posteriores. Esa corrida tenía varios nodos de diagnóstico *visibles* entrando y saliendo de la membresía. Hipótesis sin confirmar: Horde borra del CRDT las claves de un miembro que se va (`registry_impl.ex`) y eso pisa un registro recién hecho. Se mitiga en el hito 4 verificando el registro tras cada failover en el test de caos, repetido varias veces. Si reaparece, el `FlightServer` puede re-registrarse periódicamente.

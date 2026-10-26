@@ -17,6 +17,9 @@ defmodule LevantarVuelo.Application do
           # Alertas replicadas en todos los nodos con un CRDT (AP): cada nodo tiene
           # su copia y se sincronizan solas. Ver AlertIndex.
           LevantarVuelo.AlertIndex,
+          # Copias de vuelos de este y otros nodos. Va antes que los FlightServer,
+          # que al arrancar le piden la última copia de su vuelo.
+          LevantarVuelo.ReplicaStore,
           # Supervisor distribuido: elige en qué nodo vive cada FlightServer y, si el
           # nodo se cae, lo reinicia en otro. UniformQuorumDistribution además apaga
           # los procesos de un nodo que queda aislado de la mayoría (partición de red).

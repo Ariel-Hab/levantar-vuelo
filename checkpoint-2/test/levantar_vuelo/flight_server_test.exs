@@ -1,7 +1,7 @@
 defmodule LevantarVuelo.FlightServerTest do
   use ExUnit.Case, async: false
 
-  alias LevantarVuelo.FlightServer
+  alias LevantarVuelo.{FlightServer, ReplicaStore}
 
   # Atributos base para arrancar un FlightServer en los tests
   defp vuelo_attrs(id \\ "fl_test") do
@@ -98,5 +98,62 @@ defmodule LevantarVuelo.FlightServerTest do
     {:ok, flight} = FlightServer.get("fl_expira")
     assert {:closed, :expired} = flight.status
     assert flight.reservations["r1"].status == :cancelled
+  end
+
+  describe "réplica" do
+    test "si el proceso se cae, al reiniciarse recupera el estado y sube la época", %{flight_id: id} do
+      {:ok, "r1"} = FlightServer.reserve(id, "u1", "r1")
+      {:ok, _} = FlightServer.assign_seats(id, "r1", [:window])
+
+      pid = whereis(id)
+      assert :sys.get_state(pid).epoch == 1
+
+      # El supervisor de ExUnit lo reinicia, igual que haría Horde
+      Process.exit(pid, :kill)
+      new_pid = wait_restart(id, pid)
+
+      {:ok, flight} = FlightServer.get(id)
+      assert flight.reservations["r1"].status == :confirmed
+      assert flight.available.window == 0
+      assert :sys.get_state(new_pid).epoch == 2
+    end
+
+    test "un primario viejo no confirma nada y se retira (fencing)" do
+      id = "fl_fencing"
+      start_supervised!({FlightServer, vuelo_attrs(id)}, id: :fl_fencing, restart: :transient)
+      pid = whereis(id)
+      ref = Process.monitor(pid)
+
+      # El reclamo del vuelo corre en handle_continue, después de init. Un pedido
+      # cualquiera espera a que termine.
+      {:ok, _} = FlightServer.get(id)
+
+      # Otro primario (época 2) reclama el vuelo, como pasaría después de una partición
+      {:ok, {{1, version}, flight}} = ReplicaStore.fetch_latest([node()], id)
+      {:ok, _} = ReplicaStore.replicate([node()], id, {2, version}, flight)
+
+      assert FlightServer.reserve(id, "u1", "r1") == {:error, :stale_epoch}
+      assert_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :stale_epoch}}
+
+      {:ok, {{2, ^version}, flight}} = ReplicaStore.fetch_latest([node()], id)
+      assert flight.reservations == %{}
+    end
+  end
+
+  defp whereis(id) do
+    [{pid, _}] = Horde.Registry.lookup(LevantarVuelo.Registry, id)
+    pid
+  end
+
+  # Espera a que el vuelo tenga un proceso distinto de old_pid
+  defp wait_restart(id, old_pid, tries \\ 100) do
+    case Horde.Registry.lookup(LevantarVuelo.Registry, id) do
+      [{pid, _}] when pid != old_pid ->
+        pid
+
+      _ when tries > 0 ->
+        Process.sleep(10)
+        wait_restart(id, old_pid, tries - 1)
+    end
   end
 end

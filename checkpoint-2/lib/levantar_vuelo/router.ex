@@ -164,10 +164,13 @@ defmodule LevantarVuelo.Router do
   # :noproc viene de AlertIndex (lo está reiniciando el supervisor),
   # :down, :nodedown y :timeout de cualquier servicio. :quorum_not_met y
   # :no_alive_nodes vienen de Horde (el nodo quedó aislado o no hay nodos).
+  # :no_quorum y :stale_epoch vienen de la réplica del FlightServer (no se
+  # pudo confirmar en quórum, o el vuelo cambió de primario).
   # Son fallas transitorias: el cliente puede reintentar (por eso reserve
   # tiene que ser idempotente).
   defp error_response(conn, reason)
-       when reason in [:noproc, :down, :nodedown, :timeout, :quorum_not_met, :no_alive_nodes],
+       when reason in [:noproc, :down, :nodedown, :timeout, :quorum_not_met, :no_alive_nodes,
+                       :no_quorum, :stale_epoch],
     do: json(conn, 503, %{error: "servicio no disponible, reintentá", reason: reason})
 
   # El resto son errores de negocio (ej. :reservation_not_found)
