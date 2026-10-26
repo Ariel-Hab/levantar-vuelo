@@ -11,7 +11,7 @@ Cada checkpoint tiene su propia carpeta con el proyecto completo tal como quedó
 | # | Fecha | Estado | Carpeta |
 |---|---|---|---|
 | 1 | 08/10 | 🔖 v1 | [checkpoint-1/](checkpoint-1/) |
-| 2 | 29/10 | 📝 Planificado | [plan](checkpoint-2/docs/plan.md) |
+| 2 | 29/10 | ✅ Listo para entregar | [checkpoint-2/](checkpoint-2/) |
 | Final | 13/12 | 🔜 Pendiente | — |
 
 Dentro de cada carpeta hay un `docs/` con las decisiones de diseño y el debate del equipo.
@@ -26,9 +26,9 @@ Cada vuelo es un proceso `GenServer` independiente. Su mailbox serializa todos l
 
 Vuelos distintos son actores distintos: se procesan en paralelo en todos los cores y nodos.
 
-### Distribución planeada (checkpoint 2 en adelante)
+### Distribución (checkpoint 2)
 
-El sistema va a correr en un cluster de nodos Erlang. Todos los nodos son iguales — no hay un master. Cualquier nodo puede recibir cualquier request y lo rutea al actor correcto.
+El sistema corre en un cluster de nodos Erlang. Todos los nodos son iguales — no hay un master. Cualquier nodo puede recibir cualquier request y lo rutea al actor correcto. Detalle en [checkpoint-2/README.md](checkpoint-2/README.md) y decisiones en [checkpoint-2/docs/tradeoffs.md](checkpoint-2/docs/tradeoffs.md).
 
 ```
                         ┌─────────────────────────────────────┐
@@ -49,7 +49,7 @@ Clientes ──→ nginx ──→  │  Cluster Erlang (3 nodos)           │
 |---|---|
 | Encontrar en qué nodo vive un vuelo | `Horde.Registry` — registro distribuido entre todos los nodos |
 | Si un nodo se cae, reiniciar sus vuelos en otro | `Horde.DynamicSupervisor` — supervisor distribuido |
-| Que el estado no se pierda si cae un nodo | Replicación sincrónica: el actor escribe en R réplicas antes de confirmar |
+| Que el estado no se pierda si cae un nodo | Réplica con quórum: el actor escribe en 2 de 3 nodos antes de confirmar, con épocas para que no haya dos primarios |
 | Conectar los nodos automáticamente | `libcluster` con DNS en Docker |
 | Notificaciones a usuarios en cualquier nodo | `Phoenix.PubSub` distribuido |
 | Alertas disponibles en todos los nodos | `DeltaCrdt` — replicación eventual entre nodos |
