@@ -3,7 +3,7 @@ defmodule LevantarVuelo.Router do
 
   require Logger
 
-  alias LevantarVuelo.{Alert, AlertIndex, FlightServer}
+  alias LevantarVuelo.{Alert, AlertIndex, Flight, FlightServer}
 
   plug Plug.Parsers,
     parsers: [:json],
@@ -31,16 +31,20 @@ defmodule LevantarVuelo.Router do
       capacity: %{window: w, aisle: a, middle: m}
     }
 
-    case DynamicSupervisor.start_child(LevantarVuelo.DynamicSupervisor,{FlightServer, attrs}) do
+    # Horde elige el nodo donde vive el vuelo (puede ser otro, no el que recibió el pedido).
+    case Horde.DynamicSupervisor.start_child(LevantarVuelo.DynamicSupervisor, {FlightServer, attrs}) do
       {:ok, _pid} ->
         # F3: busca usuarios con alertas que coinciden y los notifica.
         # El vuelo ya está creado: si no podemos consultar las alertas no
         # fallamos el POST, solo no notificamos (degradación).
+        # Se matchea contra los datos del pedido (Flight.new) y no contra el
+        # FlightServer: si el vuelo nació en otro nodo, el registro distribuido
+        # tarda un instante en enterarse y un FlightServer.get podría dar :not_found.
         users =
-          with {:ok, flight} <- FlightServer.get(id),
-               {:ok, users} <- AlertIndex.matching_users(flight) do
-            users
-          else
+          case AlertIndex.matching_users(Flight.new(attrs)) do
+            {:ok, users} ->
+              users
+
             {:error, reason} ->
               Logger.warning("No se notificaron las alertas del vuelo #{id}: #{inspect(reason)}")
               []
@@ -54,6 +58,10 @@ defmodule LevantarVuelo.Router do
 
       {:error, {:already_started, _}} ->
         send_resp(conn, 409, Jason.encode!(%{error: "vuelo ya existe"}))
+
+      # Horde no pudo ubicar el vuelo (sin quórum, sin nodos vivos...): falla transitoria
+      {:error, reason} ->
+        error_response(conn, reason)
     end
   end
 
@@ -154,9 +162,12 @@ defmodule LevantarVuelo.Router do
   defp error_response(conn, :flight_closed), do: json(conn, 410, %{error: "vuelo cerrado"})
 
   # :noproc viene de AlertIndex (lo está reiniciando el supervisor),
-  # :down, :nodedown y :timeout de cualquier servicio. Son fallas transitorias:
-  # el cliente puede reintentar (por eso reserve tiene que ser idempotente).
-  defp error_response(conn, reason) when reason in [:noproc, :down, :nodedown, :timeout],
+  # :down, :nodedown y :timeout de cualquier servicio. :quorum_not_met y
+  # :no_alive_nodes vienen de Horde (el nodo quedó aislado o no hay nodos).
+  # Son fallas transitorias: el cliente puede reintentar (por eso reserve
+  # tiene que ser idempotente).
+  defp error_response(conn, reason)
+       when reason in [:noproc, :down, :nodedown, :timeout, :quorum_not_met, :no_alive_nodes],
     do: json(conn, 503, %{error: "servicio no disponible, reintentá", reason: reason})
 
   # El resto son errores de negocio (ej. :reservation_not_found)

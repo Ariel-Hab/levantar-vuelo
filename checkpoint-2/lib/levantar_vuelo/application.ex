@@ -10,9 +10,19 @@ defmodule LevantarVuelo.Application do
     children =
       cluster_children() ++
         [
-          {Registry, keys: :unique, name: LevantarVuelo.Registry},
+          # Registro distribuido: "vuelo X -> pid" visible desde cualquier nodo.
+          # members: :auto hace que Horde sume y saque nodos solo, a medida que
+          # libcluster los conecta o se caen.
+          {Horde.Registry, name: LevantarVuelo.Registry, keys: :unique, members: :auto},
           LevantarVuelo.AlertIndex,
-          {DynamicSupervisor, strategy: :one_for_one, name: LevantarVuelo.DynamicSupervisor},
+          # Supervisor distribuido: elige en qué nodo vive cada FlightServer y, si el
+          # nodo se cae, lo reinicia en otro. UniformQuorumDistribution además apaga
+          # los procesos de un nodo que queda aislado de la mayoría (partición de red).
+          {Horde.DynamicSupervisor,
+           name: LevantarVuelo.DynamicSupervisor,
+           strategy: :one_for_one,
+           distribution_strategy: Horde.UniformQuorumDistribution,
+           members: :auto},
           {Bandit, plug: LevantarVuelo.Router, port: System.get_env("PORT", "4000")}
         ]
 

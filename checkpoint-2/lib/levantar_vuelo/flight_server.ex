@@ -104,9 +104,11 @@ defmodule LevantarVuelo.FlightServer do
 
   # Registro por nombre: cada vuelo tiene un nombre único basado en su id.
   # Así cualquier parte del sistema puede mandarse mensajes sin tener el PID.
-  # Por ahora usamos el Registry de Elixir (un nodo). Con Horde será distribuido.
+  # Es Horde.Registry, distribuido: el vuelo puede vivir en cualquier nodo del cluster
+  # y el mensaje viaja solo hasta ahí. Además es lo que evita dos procesos para el
+  # mismo vuelo: registrar un nombre que ya existe devuelve {:error, {:already_started, pid}}.
   defp via(flight_id) do
-    {:via, Registry, {LevantarVuelo.Registry, flight_id}}
+    {:via, Horde.Registry, {LevantarVuelo.Registry, flight_id}}
   end
 
   defp ms_until(datetime) do

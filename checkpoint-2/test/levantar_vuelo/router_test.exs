@@ -20,9 +20,9 @@ defmodule LevantarVuelo.RouterTest do
     conn = conn(:post, "/flights", @vuelo) |> Router.call(@opts)
     assert conn.status == 201
 
-    [{pid, _}] = Registry.lookup(LevantarVuelo.Registry, "fl_router_post")
+    [{pid, _}] = Horde.Registry.lookup(LevantarVuelo.Registry, "fl_router_post")
     assert {:undefined, ^pid, :worker, _} =
-             DynamicSupervisor.which_children(LevantarVuelo.DynamicSupervisor)
+             Horde.DynamicSupervisor.which_children(LevantarVuelo.DynamicSupervisor)
              |> List.keyfind(pid, 1)
 
     conn = conn(:post, "/flights", @vuelo) |> Router.call(@opts)

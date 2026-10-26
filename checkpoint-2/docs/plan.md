@@ -202,11 +202,18 @@ Orden pensado para que cada hito se pueda verificar solo.
   - Cada nodo arranca con `--name levantar@<IP del contenedor>` y la misma cookie (entrypoint o `mix release` con `RELEASE_NODE` y `RELEASE_COOKIE`).
   - `docker-compose.yml`: `app` escalado con `--scale app=3`, sin puerto fijo, más `nginx` delante en el 4000. nginx debe re-resolver el DNS (`resolver 127.0.0.11` y variable en `proxy_pass`) y no bufferear el SSE (`proxy_buffering off`, `proxy_http_version 1.1` y un `proxy_read_timeout` largo).
   - **Verificación:** `Node.list()` muestra 2 nodos en cada contenedor.
-- [ ] **2. Horde para vuelos.**
-  - `application.ex`: `Horde.Registry` y `Horde.DynamicSupervisor` con `UniformQuorumDistribution`. Registrar miembros con un `NodeObserver` como en clase (a verificar si `members: :auto` de Horde 0.9 lo reemplaza).
-  - `FlightServer`: `via` a `Horde.Registry` y `child_spec` con `flight_id` como id.
-  - `router.ex`: `start_child` a Horde. Revisar qué devuelve cuando el vuelo ya existe.
-  - **Verificación:** POST en un nodo, GET en otro, mismo vuelo.
+- [x] **2. Horde para vuelos.** Hecho el 26/10.
+  - `application.ex`: `Horde.Registry` y `Horde.DynamicSupervisor` con `UniformQuorumDistribution` y `members: :auto`. Se verificó en el código de Horde 0.9.1 que `:auto` reemplaza al `NodeObserver` de clase, que no hace falta.
+  - `FlightServer`: `via` a `Horde.Registry`.
+  - `router.ex`: `start_child` a Horde. Si el vuelo ya existe devuelve `{:error, {:already_started, pid}}` (409, igual que antes). Los errores nuevos `:quorum_not_met` y `:no_alive_nodes` dan 503. La búsqueda de alertas usa `Flight.new(attrs)` y no consulta al `FlightServer`, porque el registro distribuido tarda un instante en propagarse.
+  - **Verificado en Docker (3 nodos):** 12 `GET` seguidos por nginx dan 200 (antes 3 de 8); el `POST` repetido da siempre 409; 6 reservas llegadas por nodos distintos suman en el mismo vuelo.
+  - **Failover medido:** al matar el nodo donde vive un vuelo, Horde lo reinicia en otro nodo y vuelve a responder en 1,2 a 1,5 s (5 de 5 intentos). **Reinicia con el estado vacío** (sin reservas): eso lo resuelve el hito 4.
+  - **Qué se aprendió de Horde 0.9.1:**
+    - El `id` del child spec se **randomiza**: lo que evita dos procesos para el mismo vuelo es el nombre registrado (`via`), no el `id`.
+    - El nodo se elige por un hash de los argumentos de `start_link` (los datos del vuelo), así que es estable para un mismo vuelo.
+    - `UniformQuorumDistribution` apaga los procesos de un nodo que queda aislado de la mayoría. Hay que tenerlo en cuenta en el hito 4.
+    - Se dejó `process_redistribution` en `:passive` (el valor por defecto) a propósito. Con `:active`, Horde mata y reinicia los vuelos cuando entra un nodo nuevo, y hoy eso perdería el estado.
+    - `members: :auto` suma **todos los nodos visibles**, no solo los de la app. Un `iex --remsh` o un nodo de diagnóstico se vuelve miembro de Horde. Hay que conectarse con `--hidden`.
 - [ ] **3. Alertas replicadas.**
   - `AlertIndex` pasa a `DeltaCrdt` (AWLWWMap). `matching_users` lee la copia local.
   - Los vecinos del CRDT se actualizan con `:net_kernel.monitor_nodes`.
@@ -250,7 +257,6 @@ Orden pensado para que cada hito se pueda verificar solo.
 **Abiertas (a definir en el hito correspondiente):**
 
 - ¿Réplicas en todos los otros nodos, o 2 elegidos por hash del `flight_id`? Con cluster fijo de 3 da lo mismo, y "todos los otros" es más simple. Se complica si se escala a más de 3.
-- ¿Cómo se registran los miembros de Horde: `NodeObserver` (clase) o `members: :auto`?
 - ¿Phoenix para LiveDashboard en la entrega final? No hace falta decidirlo ahora. La propuesta original de Ivan (`docs/arquitectura-ivan.html`) asumía Phoenix, así que conviene avisarle de este cambio.
 
 ---
@@ -261,4 +267,4 @@ Orden pensado para que cada hito se pueda verificar solo.
 - **Reclamo en `init`.** Si no hay quórum al arrancar, el vuelo queda sin actor y devuelve 503 hasta que vuelvan los nodos. Es intencional (CP), pero hay que cubrirlo con un test.
 - **Docker + nombres de nodo.** `DNSPoll` arma nombres `basename@IP`. Si el nombre del nodo no coincide con eso, los nodos no se conectan. Se verifica en el hito 1 antes de seguir.
 - **SSE detrás de nginx.** Si nginx bufferea la respuesta o corta conexiones inactivas, el cliente no recibe los eventos. Se verifica en el hito 1 con un `curl -N` a través de nginx.
-- **API de Horde 0.9.** Varios detalles (`already_present`, `members: :auto`) están sin verificar contra la versión instalada.
+- **Vuelo reiniciado sin registrar (sin explicar).** En una corrida de prueba, tras matar el nodo, Horde reinició el `FlightServer` en otro nodo pero la tabla de claves de `Horde.Registry` quedó vacía: el proceso vivía y nadie lo encontraba por nombre (siempre 404). No se pudo reproducir en 5 intentos posteriores. Esa corrida tenía varios nodos de diagnóstico *visibles* entrando y saliendo de la membresía. Hipótesis sin confirmar: Horde borra del CRDT las claves de un miembro que se va (`registry_impl.ex`) y eso pisa un registro recién hecho. Se mitiga en el hito 4 verificando el registro tras cada failover en el test de caos, repetido varias veces. Si reaparece, el `FlightServer` puede re-registrarse periódicamente.
