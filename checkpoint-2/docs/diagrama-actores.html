@@ -152,8 +152,8 @@
   <text x="497" y="287" text-anchor="middle" class="m" font-size="7">nodeup / nodedown</text>
 
   <rect x="320" y="330" width="240" height="60" rx="6" fill="rgba(245,158,11,0.08)" stroke="#f59e0b" stroke-width="1.5"/>
-  <text x="440" y="352" text-anchor="middle" fill="#f59e0b" font-size="11" font-weight="600">Phoenix.PubSub + Notifier</text>
-  <text x="440" y="369" text-anchor="middle" class="m" font-size="8">topic "user:&lt;id&gt;" · Task.Supervisor</text>
+  <text x="440" y="352" text-anchor="middle" fill="#f59e0b" font-size="11" font-weight="600">:pg + Notifier</text>
+  <text x="440" y="369" text-anchor="middle" class="m" font-size="8">grupo {:user, id} → pids · send</text>
 
   <rect x="320" y="410" width="240" height="62" rx="6" fill="rgba(16,185,129,0.08)" stroke="#10b981" stroke-width="1.5"/>
   <text x="440" y="432" text-anchor="middle" fill="#10b981" font-size="11" font-weight="600">ReplicaStore</text>
@@ -169,7 +169,7 @@
   <text x="714" y="152" class="m" font-size="10" font-weight="600" letter-spacing="0.08em">NODO B</text>
   <text x="714" y="180" class="t" font-size="9">Horde.Registry</text>
   <text x="714" y="228" class="t" font-size="9">AlertIndex (DeltaCrdt)</text>
-  <text x="714" y="276" class="t" font-size="9">Phoenix.PubSub · conexión SSE</text>
+  <text x="714" y="276" class="t" font-size="9">:pg · conexión SSE</text>
   <text x="714" y="322" class="t" font-size="9">ReplicaStore</text>
 
   <rect x="700" y="380" width="260" height="140" rx="10" fill="none" class="frame" stroke-width="1.2" stroke-dasharray="6 4"/>
@@ -213,7 +213,7 @@
   <line x1="255" y1="358" x2="316" y2="358" stroke="#f59e0b" stroke-width="1.4" marker-end="url(#aa)"/>
   <text x="270" y="352" fill="#f59e0b" font-size="8">avisa</text>
 
-  <!-- PubSub → conexión SSE -->
+  <!-- :pg → conexión SSE -->
   <line x1="318" y1="338" x2="274" y2="266" stroke="#f59e0b" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#aa)"/>
 
   <!-- ===== entre nodos (A → B) ===== -->
@@ -227,9 +227,9 @@
   <text x="590" y="236" fill="#8b5cf6" font-size="8">Δ alertas</text>
   <text x="590" y="248" class="m" font-size="7">cada 100 ms (AP)</text>
 
-  <!-- PubSub → B -->
+  <!-- :pg → B -->
   <line x1="560" y1="360" x2="696" y2="273" stroke="#f59e0b" stroke-width="1.4" marker-end="url(#aa)"/>
-  <text x="600" y="306" fill="#f59e0b" font-size="8">broadcast</text>
+  <text x="600" y="306" fill="#f59e0b" font-size="8">send al pid</text>
 
   <!-- ReplicaStore → B (quórum) -->
   <line x1="560" y1="440" x2="696" y2="319" stroke="#10b981" stroke-width="1.6" marker-end="url(#ag)"/>
@@ -246,7 +246,7 @@
   <div class="legend-item"><span class="legend-dot" style="background:#06b6d4"></span>HTTP / SSE</div>
   <div class="legend-item"><span class="legend-dot" style="background:#10b981"></span>Vuelos y réplica (CP)</div>
   <div class="legend-item"><span class="legend-dot" style="background:#8b5cf6"></span>Alertas (AP, CRDT)</div>
-  <div class="legend-item"><span class="legend-dot" style="background:#f59e0b"></span>Avisos (PubSub)</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#f59e0b"></span>Avisos (:pg)</div>
   <div class="legend-item"><span class="legend-dot" style="background:#64748b"></span>Horde (registro)</div>
   <div class="legend-item"><span class="legend-dot" style="background:#f43f5e"></span>Plano de control</div>
   <div class="legend-item">— — punteada = asincrónico / en segundo plano</div>
@@ -255,5 +255,5 @@
 <div class="notes">
   <p><b>Una escritura</b> (reservar, elegir asientos): el Router encuentra el FlightServer por Horde.Registry, aunque viva en otro nodo. El FlightServer calcula el estado nuevo con Flight y lo manda a los ReplicaStore de 3 nodos, con su época y versión. Responde recién cuando lo guardaron 2.</p>
   <p><b>Si se cae el nodo de un vuelo</b>, Horde lo arranca en otro nodo. Antes de atender, el FlightServer nuevo lee las copias de 2 ReplicaStore, sube la época y la escribe en quórum. Desde ahí, las réplicas rechazan al primario viejo.</p>
-  <p><b>Las alertas y el registro</b> son AP: cada nodo escribe en su copia y se sincronizan solos. <b>Los avisos</b> viajan por PubSub hasta la conexión SSE del usuario, esté en el nodo que esté.</p>
+  <p><b>Las alertas y el registro</b> son AP: cada nodo escribe en su copia y se sincronizan solos. <b>Los avisos</b> son un <code>send</code> directo al proceso de la conexión SSE del usuario, esté en el nodo que esté: <code>:pg</code> lleva la agenda de esos procesos y la sincroniza entre nodos.</p>
 </div>

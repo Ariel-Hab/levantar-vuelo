@@ -31,7 +31,7 @@ El plan de trabajo, hito por hito y con lo que se verificó en cada uno, está e
 | El vuelo vuelve **con** sus reservas | Réplica con quórum: cada cambio se guarda en 2 de 3 nodos antes de responder |
 | Nunca dos primarios escribiendo el mismo vuelo | Épocas (fencing) |
 | Las alertas se ven desde todos los nodos | `DeltaCrdt` replicado en cada nodo |
-| Avisos en tiempo real, aunque el usuario esté en otro nodo | SSE + `Phoenix.PubSub` |
+| Avisos en tiempo real, aunque el usuario esté en otro nodo | SSE + `:pg` (agenda de oyentes de Erlang) |
 | Reintentar después de un error no duplica nada | `reserve` y `assign_seats` idempotentes |
 
 También:
@@ -103,7 +103,7 @@ Cliente ─▶ nginx ─▶ │  Nodo A                   Nodo B                
                     │     │  replica a quórum ─────────────────────────────▶                   │
                     │  ReplicaStore             FlightServer "LA5"       ...                  │
                     │  AlertIndex (CRDT) ◀──────▶ AlertIndex (CRDT) ◀───▶ AlertIndex (CRDT)   │
-                    │  PubSub ◀────────────────▶ PubSub ◀───────────────▶ PubSub              │
+                    │  :pg agenda ◀────────────▶ :pg agenda ◀───────────▶ :pg agenda          │
                     └───────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -118,8 +118,7 @@ LevantarVuelo.Supervisor  (one_for_one)
 ├── AlertIndex  (rest_for_one)  alertas
 │   ├── DeltaCrdt                 el mapa de alertas, replicado
 │   └── CrdtNeighbours            le dice al CRDT con qué nodos sincronizar
-├── Phoenix.PubSub              avisos entre nodos
-├── Task.Supervisor             tareas que mandan los avisos
+├── :pg (scope :avisos)         agenda de oyentes de avisos, sincronizada entre nodos
 ├── ReplicaStore                copias de vuelos (de este nodo y de otros)
 ├── Horde.DynamicSupervisor     los FlightServer (uno por vuelo, en cualquier nodo)
 └── Bandit + Router             HTTP en el puerto 4000
@@ -155,20 +154,22 @@ En Docker, un vuelo vuelve a responder unos 200 ms después de matar su nodo.
 
 ```
 lib/levantar_vuelo/
-├── application.ex       árbol de supervisión
-├── flight.ex            dominio puro del vuelo (igual que en el checkpoint 1, + idempotencia)
-├── flight_server.ex     actor del vuelo: réplica, recuperación, épocas, límite de mailbox
-├── replicas.ex          en qué 3 nodos va cada vuelo (rendezvous hashing) y los quórums
-├── replica_store.ex     guarda copias; rechaza épocas viejas (fencing)
-├── alert.ex             dominio puro de alertas
-├── alert_index.ex       alertas en un DeltaCrdt
-├── crdt_neighbours.ex   mantiene los vecinos del CRDT al entrar o salir nodos
-├── notifier.ex          avisos por Phoenix.PubSub (topic "user:<id>")
-├── sse.ex               conexión SSE: escribe un evento por aviso
-├── params.ex            valida los bodies (400)
-├── safe_call.ex         GenServer.call que no tira abajo al que llama
-└── router.ex            API HTTP
-control/                 plano de control (proyecto aparte, puerto 4001)
+├── application.ex           árbol de supervisión
+├── flight.ex                dominio puro del vuelo (igual que en el checkpoint 1, + idempotencia)
+├── flight_server.ex         actor del vuelo: réplica, recuperación, épocas, límite de mailbox
+├── alert.ex                 dominio puro de alertas
+├── alert_index.ex           alertas en un DeltaCrdt
+├── distribucion/
+│   ├── replicas.ex          en qué 3 nodos va cada vuelo (rendezvous hashing) y los quórums
+│   ├── replica_store.ex     guarda copias; rechaza épocas viejas (fencing)
+│   ├── crdt_neighbours.ex   mantiene los vecinos del CRDT al entrar o salir nodos
+│   └── notifier.ex          avisos: anotarse en la agenda de :pg y hacer send a los oyentes
+└── http/
+    ├── router.ex            API HTTP
+    ├── params.ex            valida los bodies (400)
+    ├── sse.ex               conexión SSE: escribe un evento por aviso
+    └── safe_call.ex         GenServer.call que no tira abajo al que llama
+control/                     plano de control (proyecto aparte, puerto 4001)
 ```
 
 ---

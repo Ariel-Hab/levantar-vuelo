@@ -117,18 +117,22 @@ Crear una alerta no depende de otros nodos, y un nodo nuevo recibe todas las que
 
 ---
 
-## 8. Notificaciones: SSE y Phoenix.PubSub
+## 8. Notificaciones: SSE y `:pg`
 
-**Decisión:** `GET /users/:id/events` deja abierta la respuesta (SSE sobre Plug). Los avisos viajan por `Phoenix.PubSub`, y el `Notifier` los manda desde un `Task.Supervisor`.
+**Decisión:** `GET /users/:id/events` deja abierta la respuesta (SSE sobre Plug). La conexión es un proceso que se anota como oyente del usuario en `:pg` (grupos de procesos, viene con Erlang). Para avisar, el `Notifier` le pide a `:pg` los pids de los oyentes y les hace `send`.
 
 **Por qué:**
 - Los avisos van en un solo sentido y son best-effort. SSE alcanza y se prueba con `curl -N`.
-- PubSub los entrega entre nodos sin hacer nada extra: el usuario puede estar conectado a un nodo y el vuelo vivir en otro.
-- Resuelve el punto 5 del checkpoint 1: el `FlightServer` ya no espera a notificar.
+- El problema de fondo es encontrar el pid de la conexión del usuario, que puede estar en otro nodo. `:pg` es justo eso: una agenda de procesos por grupo, con un proceso por nodo que se sincroniza con los demás.
+- Resuelve el punto 5 del checkpoint 1: el `FlightServer` ya no espera a notificar, porque `send` no espera a que el otro lea el mensaje.
+
+**Alternativa descartada: Phoenix.PubSub.** Fue la primera versión. Por dentro usa `:pg`: le agrega nombres de topics y entrega por nodo, pero no hacía falta. Con `:pg` hay una dependencia menos y queda a la vista que un aviso es un `send` a un pid. Conviene volver a Phoenix.PubSub si en la entrega final se usa Phoenix (por ejemplo, para LiveDashboard). También se sacó un `Task.Supervisor` que mandaba los avisos en una tarea aparte: con `send` no hace falta.
 
 **Alternativa descartada: WebSocket con Phoenix Channels.** Es bidireccional, que no hace falta, y obligaba a migrar la capa web a Phoenix.
 
-**Límite:** si el usuario no está conectado, el aviso se pierde. No hay inbox.
+**Límites:**
+- Si el usuario no está conectado, el aviso se pierde. No hay inbox.
+- Una conexión recién abierta tarda unos milisegundos en aparecer en la agenda de los otros nodos.
 
 ---
 

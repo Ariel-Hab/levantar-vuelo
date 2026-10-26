@@ -3,7 +3,7 @@ defmodule LevantarVuelo.TestCluster do
   Levanta un cluster de verdad para los tests multi-nodo, con `:peer` (OTP 25+).
 
   Cada peer es otra VM de Erlang en esta máquina con la aplicación entera:
-  Horde, réplicas, alertas y PubSub, con la config de producción (factor 3,
+  Horde, réplicas, alertas y avisos, con la config de producción (factor 3,
   quórums de 2). El test maneja cada peer por su entrada/salida estándar
   (`connection: :standard_io`), no por distribución: así el nodo que corre los
   tests no se suma al cluster ni a Horde.

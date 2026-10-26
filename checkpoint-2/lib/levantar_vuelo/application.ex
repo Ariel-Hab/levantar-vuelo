@@ -24,10 +24,9 @@ defmodule LevantarVuelo.Application do
           # Alertas replicadas en todos los nodos con un CRDT (AP): cada nodo tiene
           # su copia y se sincronizan solas. Ver AlertIndex.
           LevantarVuelo.AlertIndex,
-          # Avisos a usuarios (ver Notifier). PubSub entrega los mensajes entre
-          # nodos solo; las tareas son para no frenar al FlightServer que avisa.
-          {Phoenix.PubSub, name: LevantarVuelo.PubSub},
-          {Task.Supervisor, name: LevantarVuelo.NotifierTasks},
+          # Agenda de oyentes para los avisos (ver Notifier): un proceso de :pg
+          # (viene con Erlang) que se sincroniza con los de los otros nodos.
+          %{id: :pg, start: {:pg, :start_link, [:avisos]}},
           # Copias de vuelos de este y otros nodos. Va antes que los FlightServer,
           # que al arrancar le piden la última copia de su vuelo.
           LevantarVuelo.ReplicaStore,

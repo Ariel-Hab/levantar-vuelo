@@ -26,7 +26,7 @@ Este checkpoint pasa el sistema de un nodo a un cluster Erlang de 3 nodos en Doc
 - `Horde.Registry` y `Horde.DynamicSupervisor`: cualquier nodo recibe cualquier request y lo rutea al `FlightServer`, vivo en el nodo que sea.
 - Alertas replicadas en todos los nodos (`DeltaCrdt`).
 - El estado de un vuelo sobrevive a la caída de un nodo: réplica con quórum y épocas (fencing).
-- Notificaciones reales por SSE sobre Plug, con `Phoenix.PubSub` distribuido y un `Notifier`.
+- Notificaciones reales por SSE sobre Plug, con un `Notifier` que encuentra las conexiones del usuario en cualquier nodo con `:pg` (al principio era `Phoenix.PubSub`, ver hito 5).
 - Idempotencia de `assign_seats`, límite de mailbox y validación de body (400).
 - Tests multi-nodo y un script de caos.
 
@@ -166,7 +166,11 @@ Phoenix es un framework web completo, construido **encima de Plug** (y de Bandit
 
 Un **controller** es un módulo de Phoenix que agrupa los handlers de una misma cosa. Cada función (una *acción*) atiende una ruta. Es lo que hoy hace cada bloque `post "/algo" do ... end` del `Router`. No lo necesitamos con Plug.
 
-`Phoenix.PubSub` es una librería aparte (`phoenix_pubsub`) y funciona sola, sin el framework. Manda mensajes por topics entre procesos, y entre nodos si están conectados en cluster. Es lo único de Phoenix que usamos.
+`Phoenix.PubSub` es una librería aparte (`phoenix_pubsub`) y funciona sola, sin el framework. Manda mensajes por topics entre procesos, y entre nodos si están conectados en cluster. Fue lo único de Phoenix que usamos, y después lo reemplazamos por `:pg`, que es lo que usa por dentro (ver abajo).
+
+### Qué es `:pg`
+
+`:pg` (*process groups*) viene con Erlang. Es una agenda de procesos por grupo: un proceso se anota en un grupo con `:pg.join/3` y cualquiera pide los miembros con `:pg.get_members/2`. Hay un proceso de `:pg` por nodo (el *scope*), y los de distintos nodos se sincronizan solos, así que la agenda incluye procesos de todo el cluster. Si un proceso termina, sale de la agenda solo.
 
 ### SSE (Server-Sent Events)
 
@@ -186,24 +190,24 @@ data: {"flight_id":"fl_9"}
 
 ### Cómo lo hacemos
 
-El endpoint `GET /users/:id/events` hace `send_chunked(200)`, se suscribe al topic `"user:<id>"` de `Phoenix.PubSub` y queda en un loop: espera un mensaje y lo escribe con `chunk/2`. Son unas 30 líneas. La única dependencia nueva es `phoenix_pubsub`.
+El endpoint `GET /users/:id/events` hace `send_chunked(200)`, anota su proceso en el grupo `{:user, id}` de `:pg` (scope `:avisos`) y queda en un loop: espera un mensaje y lo escribe con `chunk/2`. Para avisar, el `Notifier` pide los miembros del grupo y les hace `send`. No hay dependencias nuevas.
 
 ```
 cliente ──GET /users/u1/events──▶ proceso de la request (en el nodo X)
-                                      │ se suscribe a PubSub "user:u1"
-FlightServer (nodo Y) ─▶ Notifier ─▶ PubSub.broadcast("user:u1", evento)
-                                      │ PubSub entrega a todos los nodos
+                                      │ :pg.join(:avisos, {:user, "u1"}, self())
+FlightServer (nodo Y) ─▶ Notifier ─▶ :pg.get_members(:avisos, {:user, "u1"})
+                                      │ send(pid, {:notification, evento})
 cliente ◀─ "event: flight_closed" ────┘
 ```
 
-Si el usuario está conectado al nodo X y el vuelo vive en el nodo Y, `Phoenix.PubSub` entrega el mensaje entre nodos solo, una vez que están conectados.
+Si el usuario está conectado al nodo X y el vuelo vive en el nodo Y, el `:pg` de Y ya conoce el pid de X, y `send` a un pid de otro nodo funciona igual que a uno local.
 
 ### Por qué SSE con Plug y no Phoenix
 
 - Las notificaciones solo van del servidor al cliente y son best-effort (el estado real se consulta con `GET /flights/:id`). Un WebSocket bidireccional no aporta nada.
 - No hay que migrar la capa web: los controllers, el `Endpoint` y el resto de la estructura de Phoenix son complejidad que la distribución no necesita. Horde, libcluster, la réplica y las épocas funcionan igual con Plug.
 - Se prueba con `curl -N`.
-- Si más adelante se quiere Phoenix (por ejemplo para LiveDashboard en la entrega final), el cambio queda confinado a la capa web, porque las notificaciones pasan por topics de PubSub y el dominio no se entera.
+- Si más adelante se quiere Phoenix (por ejemplo para LiveDashboard en la entrega final), el cambio queda confinado a la capa web y al `Notifier`, porque el dominio solo llama a `Notifier.notify/2`. Ahí conviene volver a `Phoenix.PubSub`.
 
 **Limitaciones aceptadas:** no hay presence (saber quién está conectado) ni mensajes del cliente al servidor por el mismo canal, y no hay autenticación (cualquiera puede suscribirse al `user_id` que quiera, igual que hoy con la API REST). Existe una tercera opción, WebSocket sin Phoenix con `WebSock` de Bandit, que no se evaluó en detalle.
 
@@ -254,11 +258,12 @@ Orden pensado para que cada hito se pueda verificar solo.
     - Con 1 solo nodo vivo, reservar da 503 `no_quorum`. Al volver un segundo nodo se puede reservar de nuevo, y la reserva rechazada no quedó guardada.
   - **Visto en Docker, de antes de este hito:** un `POST /flights/:id/reservations` justo después del `POST /flights` puede dar 404 si nginx lo manda a otro nodo, porque `Horde.Registry` tarda un instante en propagar el registro. Ver riesgos.
 - [x] **5. Notificaciones por SSE.** Hecho el 26/10. (ver sección 4)
-  - Dependencia `phoenix_pubsub` (2.4.1), y `{Phoenix.PubSub, name: LevantarVuelo.PubSub}` y `{Task.Supervisor, name: LevantarVuelo.NotifierTasks}` en `application.ex`.
+  - *Primera versión (después reemplazada por `:pg`, ver abajo):* dependencia `phoenix_pubsub` (2.4.1), y `{Phoenix.PubSub, name: LevantarVuelo.PubSub}` y `{Task.Supervisor, name: LevantarVuelo.NotifierTasks}` en `application.ex`.
   - `Notifier`: `subscribe(user_id)` y `notify(user_ids, evento)`. El envío corre en una tarea del `Task.Supervisor`, así el `FlightServer` no espera. Hace `PubSub.broadcast("user:<id>", {:notification, evento})` y reemplaza los `Logger.info` del `FlightServer` y del `Router` (el log de cada aviso quedó adentro del `Notifier`).
   - `SSE`: `GET /users/:id/events` hace `send_chunked`, se suscribe al topic y queda en un loop de `chunk/2`. Primero manda el comentario `: conectado a <nodo>`, y cada 15 s sin avisos un `: ping` para que nginx no corte la conexión. Cuando el cliente se va, el próximo `chunk` falla y el proceso termina. Eventos: `flight_published` (F3) y `flight_closed` con `reason` `sold_out` o `expired`.
   - **Tests:** entrega por topic, formato SSE, aviso de agotado y de vencido desde el `FlightServer`, y F3 desde el router. El endpoint en sí no tiene test unitario: el adaptador de test de Plug acumula los chunks sin avisar, y el loop no termina.
   - **Verificado en Docker:** un `curl -N` conectado a `172.20.0.2` recibió los 4 `flight_published` de una alerta (publicados desde distintos nodos por nginx) y el `flight_closed` de un vuelo agotado que vivía en `172.20.0.3`.
+  - **Cambio posterior: `Phoenix.PubSub` → `:pg`.** Se sacaron `phoenix_pubsub` y el `Task.Supervisor`. `Notifier.subscribe/1` hace `:pg.join(:avisos, {:user, id}, self())` y `notify/2` hace `send` a cada pid de `:pg.get_members/2`; `application.ex` arranca el scope `:avisos`. `Phoenix.PubSub` usa `:pg` por dentro, así que no aportaba nada y escondía que un aviso es un `send` a un pid. La tarea aparte tampoco hacía falta: `send` no espera a que el otro lea. Los tests de notificaciones y el multi-nodo (aviso que viaja de un nodo a otro) pasan igual. Detalle en [tradeoffs](tradeoffs.md#8-notificaciones-sse-y-pg).
 - [x] **6. Endurecimiento.** Hecho el 26/10.
   - `assign_seats` idempotente: la reserva guarda el pedido (`requested`, ordenado). Repetir el mismo pedido sobre una reserva confirmada devuelve los mismos asientos sin cambiar nada, aunque esa compra haya agotado el vuelo. Un pedido distinto da `{:reservation_already, :confirmed}` (422). Importa porque `SafeCall` puede devolver `:timeout` con el pedido ya aplicado.
   - Límite de mailbox del `FlightServer` (load shedding): si hay más de `flight_max_mailbox` pedidos en cola (1.000, en config), contesta `:overloaded` (503) enseguida en vez de atenderlos. `:location` queda afuera para poder diagnosticar.
@@ -268,7 +273,7 @@ Orden pensado para que cada hito se pueda verificar solo.
   - **Tests (67):** idempotencia en `Flight`, validaciones en `Params`, 400 y átomos en el router, y `:overloaded` con el proceso frenado con `:sys.suspend` y 20 pedidos en cola contra un límite de 5.
   - **Verificado en Docker:** bodies inválidos dan 400 con mensaje; crear un vuelo y reservar enseguida por nginx dio 30 de 30 veces 201 (antes había 404); el mismo pedido de asientos dos veces devuelve los mismos asientos.
 - [x] **7. Pruebas y documentación.** Hecho el 26/10.
-  - [x] **Tests multi-nodo con `:peer`** (hecho el 26/10). `test/support/test_cluster.ex` levanta 3 VMs de Erlang con la app completa y la config de producción (factor 3, quórums de 2), manejadas por entrada/salida estándar para que el nodo de los tests no se sume al cluster. `cluster_test.exs` (4 tests, unos 23 s): el vuelo sobrevive a la caída de su nodo con sus compras y época 2; con un solo nodo vivo, reservar da `:no_quorum`; una alerta creada en un nodo se ve desde otro; el aviso de vuelo agotado llega a un usuario escuchando en otro nodo. Corren con `mix test`; `mix test --exclude cluster` los saltea.
+  - [x] **Tests multi-nodo con `:peer`** (hecho el 26/10). `test/support/test_cluster.ex` levanta 3 VMs de Erlang con la app completa y la config de producción (factor 3, quórums de 2), manejadas por entrada/salida estándar para que el nodo de los tests no se sume al cluster. `cluster_test.exs` (4 tests, unos 23 s): el vuelo sobrevive a la caída de su nodo con sus compras y época 2; con un solo nodo vivo, reservar da `:no_quorum`; una alerta creada en un nodo se ve desde otro; el aviso de vuelo agotado llega a un usuario escuchando en otro nodo. Corren con `mix test`; `mix test --exclude cluster` los saltea. En total quedan 71 tests.
     - **Hallazgo:** al principio los tests que matan nodos fallaban casi siempre. Horde le cuenta a los otros nodos qué procesos tiene cada `sync_interval` (300 ms por defecto), y los tests mataban el nodo a los pocos ms de crear el vuelo: los sobrevivientes no sabían que existía y nadie lo reiniciaba. Es un límite real (documentado en tradeoffs). Se bajó el `sync_interval` del `DynamicSupervisor` a 100 ms, y los tests esperan 1 s después de crear el vuelo. Se probó un "reviver" de vuelos huérfanos (`FlightKeeper`) y se descartó por complejo para el TP.
     - De paso, `POST /flights` responde 201 recién cuando el vuelo está replicado en quórum (antes respondía apenas arrancaba el proceso).
   - [x] **Script de caos → reemplazado.** El test multi-nodo de failover verifica automáticamente que una compra confirmada sobrevive a la caída de su nodo, y la demo manual está en el README (sección 6), con `/location` y el plano de control. Un script con carga continua queda para la entrega final, junto con k6.
@@ -289,7 +294,7 @@ Orden pensado para que cada hito se pueda verificar solo.
 | Dónde van las réplicas | Factor 3 por rendezvous hashing, quórum de escritura y de lectura 2 (decidido el 26/10, pensando en escalar a más de 3 nodos) |
 | Épocas (fencing) | Incluidas en el checkpoint 2: cierran la ventana de doble primario y cuestan poco |
 | Capa web | Se mantiene Plug + Bandit (decidido el 23/10). Phoenix se evaluó y se descartó: su estructura no aporta a la distribución |
-| Notificaciones | SSE con Plug + `Phoenix.PubSub` distribuido |
+| Notificaciones | SSE con Plug + `:pg` (empezó con `Phoenix.PubSub`, se cambió el 26/10) |
 | Alertas | `DeltaCrdt` (AP) |
 
 **Abiertas (a definir en el hito correspondiente):**

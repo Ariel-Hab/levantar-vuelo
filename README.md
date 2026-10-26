@@ -51,7 +51,7 @@ Clientes ──→ nginx ──→  │  Cluster Erlang (3 nodos)           │
 | Si un nodo se cae, reiniciar sus vuelos en otro | `Horde.DynamicSupervisor` — supervisor distribuido |
 | Que el estado no se pierda si cae un nodo | Réplica con quórum: el actor escribe en 2 de 3 nodos antes de confirmar, con épocas para que no haya dos primarios |
 | Conectar los nodos automáticamente | `libcluster` con DNS en Docker |
-| Notificaciones a usuarios en cualquier nodo | `Phoenix.PubSub` distribuido |
+| Notificaciones a usuarios en cualquier nodo | SSE + `:pg` (grupos de procesos de Erlang, sincronizados entre nodos) |
 | Alertas disponibles en todos los nodos | `DeltaCrdt` — replicación eventual entre nodos |
 
 ### CAP: qué elegimos según el tipo de dato
