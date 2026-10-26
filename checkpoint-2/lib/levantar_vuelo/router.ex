@@ -3,7 +3,7 @@ defmodule LevantarVuelo.Router do
 
   require Logger
 
-  alias LevantarVuelo.{Alert, AlertIndex, Flight, FlightServer, Notifier, Params, SSE}
+  alias LevantarVuelo.{Alert, AlertIndex, FlightServer, Notifier, Params, SafeCall, SSE}
 
   plug Plug.Parsers,
     parsers: [:json],
@@ -132,31 +132,33 @@ defmodule LevantarVuelo.Router do
 
   # Horde elige el nodo donde vive el vuelo (puede ser otro, no el que recibió el pedido).
   defp publish_flight(conn, %{id: id} = attrs) do
-    case Horde.DynamicSupervisor.start_child(LevantarVuelo.DynamicSupervisor, {FlightServer, attrs}) do
-      {:ok, _pid} ->
-        # F3: busca usuarios con alertas que coinciden y los notifica.
-        # El vuelo ya está creado: si no podemos consultar las alertas no
-        # fallamos el POST, solo no notificamos (degradación).
-        # Se matchea contra los datos del pedido (Flight.new) y no contra el
-        # FlightServer: si el vuelo nació en otro nodo, el registro distribuido
-        # tarda un instante en enterarse y un FlightServer.get podría dar :not_found.
-        users =
-          case AlertIndex.matching_users(Flight.new(attrs)) do
-            {:ok, users} ->
-              users
+    with {:ok, pid} <- Horde.DynamicSupervisor.start_child(LevantarVuelo.DynamicSupervisor, {FlightServer, attrs}),
+         # 201 recién cuando el vuelo está replicado: el FlightServer lo reclama
+         # en quórum apenas arranca, y este pedido espera a que termine (CP: no
+         # confirmamos un vuelo que se pierde si se cae su nodo). Si no hay
+         # quórum da 503; el vuelo quedó creado y reintentar da 409.
+         {:ok, flight} <- SafeCall.call(pid, :get) do
+      # F3: busca usuarios con alertas que coinciden y los notifica.
+      # El vuelo ya está creado: si no podemos consultar las alertas no
+      # fallamos el POST, solo no notificamos (degradación).
+      users =
+        case AlertIndex.matching_users(flight) do
+          {:ok, users} ->
+            users
 
-            {:error, reason} ->
-              Logger.warning("No se notificaron las alertas del vuelo #{id}: #{inspect(reason)}")
-              []
-          end
+          {:error, reason} ->
+            Logger.warning("No se notificaron las alertas del vuelo #{id}: #{inspect(reason)}")
+            []
+        end
 
-        Notifier.notify(users, {:flight_published, id})
-        json(conn, 201, %{flight_id: id, notified_users: length(users)})
-
+      Notifier.notify(users, {:flight_published, id})
+      json(conn, 201, %{flight_id: id, notified_users: length(users)})
+    else
       {:error, {:already_started, _}} ->
         json(conn, 409, %{error: "vuelo ya existe"})
 
-      # Horde no pudo ubicar el vuelo (sin quórum, sin nodos vivos...): falla transitoria
+      # Horde no pudo ubicar el vuelo (sin quórum, sin nodos vivos...) o no se
+      # pudo replicar: falla transitoria
       {:error, reason} ->
         error_response(conn, reason)
     end

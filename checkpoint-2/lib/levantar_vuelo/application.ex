@@ -34,11 +34,17 @@ defmodule LevantarVuelo.Application do
           # Supervisor distribuido: elige en qué nodo vive cada FlightServer y, si el
           # nodo se cae, lo reinicia en otro. UniformQuorumDistribution además apaga
           # los procesos de un nodo que queda aislado de la mayoría (partición de red).
+          #
+          # sync_interval: cada cuánto le cuenta a los otros nodos qué procesos
+          # tiene (por defecto 300 ms). Si un nodo se cae antes de contar que
+          # arrancó un vuelo, Horde no sabe que existía y no lo reinicia (límite
+          # aceptado, ver docs/tradeoffs.md). Bajarlo achica esa ventana.
           {Horde.DynamicSupervisor,
            name: LevantarVuelo.DynamicSupervisor,
            strategy: :one_for_one,
            distribution_strategy: Horde.UniformQuorumDistribution,
-           members: :auto},
+           members: :auto,
+           delta_crdt_options: [sync_interval: 100]},
           {Bandit, plug: LevantarVuelo.Router, port: System.get_env("PORT", "4000")}
         ]
 
