@@ -1,0 +1,262 @@
+{
+  "info": {
+    "name": "Levantar Vuelo - checkpoint 2",
+    "description": "Pruebas manuales contra el cluster (nginx en el puerto 4000). Variables de la coleccion: base_url, flight_id, reservation_id, user_id, alert_id. Cada request trae un test que chequea el codigo esperado.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:4000" },
+    { "key": "flight_id", "value": "AR1" },
+    { "key": "reservation_id", "value": "r1" },
+    { "key": "user_id", "value": "u1" },
+    { "key": "alert_id", "value": "a1" }
+  ],
+  "item": [
+    {
+      "name": "Vuelos",
+      "item": [
+        {
+          "name": "Crear vuelo (201; repetido 409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 la primera vez, 409 si ya existe', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([201, 409]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"{{flight_id}}\",\n  \"airline\": \"Aerolineas Test\",\n  \"origin\": \"EZE\",\n  \"destination\": \"MAD\",\n  \"departs_at\": \"2026-12-20T22:00:00Z\",\n  \"offer_ends_at\": \"2099-01-01T00:00:00Z\",\n  \"capacity\": { \"window\": 2, \"aisle\": 2, \"middle\": 1 }\n}"
+            },
+            "url": { "raw": "{{base_url}}/flights", "host": ["{{base_url}}"], "path": ["flights"] }
+          }
+        },
+        {
+          "name": "Ver vuelo (200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 con el estado del vuelo', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json()).to.have.property('reservations_count');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/flights/{{flight_id}}", "host": ["{{base_url}}"], "path": ["flights", "{{flight_id}}"] }
+          }
+        },
+        {
+          "name": "Donde vive el vuelo (200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 con el contenedor del vuelo', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.have.property('container');",
+                  "  pm.expect(body).to.have.property('replicas');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Contenedor y nodo donde corre el FlightServer del vuelo, su epoca y version, y en que contenedores estan sus copias. Para probar el failover: docker kill <container> y volver a pedirlo; tiene que aparecer en otro contenedor con la epoca + 1.",
+            "url": {
+              "raw": "{{base_url}}/flights/{{flight_id}}/location",
+              "host": ["{{base_url}}"],
+              "path": ["flights", "{{flight_id}}", "location"]
+            }
+          }
+        },
+        {
+          "name": "Ver vuelo que no existe (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('404', function () { pm.response.to.have.status(404); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/flights/no-existe", "host": ["{{base_url}}"], "path": ["flights", "no-existe"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reservas",
+      "item": [
+        {
+          "name": "Reservar lugar (201; repetir el mismo reservation_id es idempotente)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('201', function () { pm.response.to.have.status(201); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reservation_id\": \"{{reservation_id}}\",\n  \"user_id\": \"{{user_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/flights/{{flight_id}}/reservations",
+              "host": ["{{base_url}}"],
+              "path": ["flights", "{{flight_id}}", "reservations"]
+            }
+          }
+        },
+        {
+          "name": "Elegir asientos (200; sin lugar 409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 o 409 si no hay disponibilidad', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 409]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"seats\": [\"window\"]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/flights/{{flight_id}}/reservations/{{reservation_id}}/seats",
+              "host": ["{{base_url}}"],
+              "path": ["flights", "{{flight_id}}", "reservations", "{{reservation_id}}", "seats"]
+            }
+          }
+        },
+        {
+          "name": "Reservar en vuelo que no existe (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('404', function () { pm.response.to.have.status(404); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reservation_id\": \"rx\",\n  \"user_id\": \"ux\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/flights/no-existe/reservations",
+              "host": ["{{base_url}}"],
+              "path": ["flights", "no-existe", "reservations"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Alertas",
+      "item": [
+        {
+          "name": "Crear alerta por fecha (201)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('201', function () { pm.response.to.have.status(201); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"{{alert_id}}\",\n  \"user_id\": \"{{user_id}}\",\n  \"origin\": \"EZE\",\n  \"destination\": \"MAD\",\n  \"date\": \"2026-12-20\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/alerts", "host": ["{{base_url}}"], "path": ["alerts"] }
+          }
+        },
+        {
+          "name": "Crear alerta por mes (201)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('201', function () { pm.response.to.have.status(201); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"{{alert_id}}-mes\",\n  \"user_id\": \"{{user_id}}\",\n  \"origin\": \"EZE\",\n  \"destination\": \"MAD\",\n  \"month\": { \"year\": 2026, \"month\": 12 }\n}"
+            },
+            "url": { "raw": "{{base_url}}/alerts", "host": ["{{base_url}}"], "path": ["alerts"] }
+          }
+        },
+        {
+          "name": "Borrar alerta (204)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('204', function () { pm.response.to.have.status(204); });"]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{base_url}}/alerts/{{alert_id}}", "host": ["{{base_url}}"], "path": ["alerts", "{{alert_id}}"] }
+          }
+        }
+      ]
+    }
+  ]
+}

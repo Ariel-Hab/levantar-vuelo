@@ -29,6 +29,25 @@ defmodule LevantarVuelo.RouterTest do
     assert conn.status == 409
   end
 
+  test "GET /flights/:id/location dice en qué nodo vive el vuelo" do
+    conn(:post, "/flights", %{@vuelo | id: "fl_router_location"}) |> Router.call(@opts)
+
+    conn = conn(:get, "/flights/fl_router_location/location") |> Router.call(@opts)
+    assert conn.status == 200
+
+    body = Jason.decode!(conn.resp_body)
+    assert body["node"] == to_string(node())
+    assert body["epoch"] == 1
+    assert body["recovering"] == false
+    # Fuera de Docker el nombre del nodo no tiene IP: no hay contenedor
+    assert body["container"] == nil
+  end
+
+  test "GET /flights/:id/location de un vuelo que no existe devuelve 404" do
+    conn = conn(:get, "/flights/no-existe/location") |> Router.call(@opts)
+    assert conn.status == 404
+  end
+
   # Antes de usar el wrapper estos pedidos daban 500: el exit de
   # GenServer.call tiraba abajo al proceso de la request.
   test "GET de un vuelo que no existe devuelve 404" do

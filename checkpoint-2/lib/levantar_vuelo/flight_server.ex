@@ -27,6 +27,10 @@ defmodule LevantarVuelo.FlightServer do
   def assign_seats(flight_id, reservation_id, wanted),
     do: call(flight_id, {:assign_seats, reservation_id, wanted})
 
+  # En qué nodo vive el proceso del vuelo y cómo está su réplica (para pruebas)
+  def location(flight_id),
+    do: call(flight_id, :location)
+
   # Wrapper para manejar los calls y sus errores. Usa SafeCall (compartido con AlertIndex)
   # asi no mata el proceso que llama si el vuelo no existe, se cae, o su nodo se desconecta.
   defp call(flight_id, msg) do
@@ -63,8 +67,22 @@ defmodule LevantarVuelo.FlightServer do
   @impl true
   def handle_continue(:recover, state), do: recover(state)
 
-  # Mientras no se pudo recuperar el vuelo no atiende pedidos: 503, reintentá
+  # Dónde vive el vuelo y cómo está su réplica (GET /flights/:id/location).
+  # Contesta aunque el vuelo se esté recuperando: sirve para ver dónde quedó trabado.
   @impl true
+  def handle_call(:location, _from, state) do
+    info = %{
+      node: node(),
+      recovering: is_nil(state.flight),
+      epoch: state.epoch,
+      version: state.version,
+      replicas: state.replicas
+    }
+
+    {:reply, {:ok, info}, state}
+  end
+
+  # Mientras no se pudo recuperar el vuelo no atiende pedidos: 503, reintentá
   def handle_call(_msg, _from, %{flight: nil} = state) do
     {:reply, {:error, :no_quorum}, state}
   end

@@ -82,6 +82,27 @@ defmodule LevantarVuelo.Router do
     end
   end
 
+  # GET /flights/:id/location — en qué contenedor vive el vuelo y dónde están
+  # sus copias. Para pruebas y demos: saber qué contenedor matar.
+  get "/flights/:id/location" do
+    case FlightServer.location(id) do
+      {:ok, info} ->
+        body = %{
+          flight_id: id,
+          node: info.node,
+          container: container_name(info.node),
+          recovering: info.recovering,
+          epoch: info.epoch,
+          version: info.version,
+          replicas: Enum.map(info.replicas, &%{node: &1, container: container_name(&1)})
+        }
+        json(conn, 200, body)
+
+      {:error, reason} ->
+        error_response(conn, reason)
+    end
+  end
+
   # --- Alertas ---
 
   # POST /alerts — crea una alerta (F2)
@@ -186,6 +207,24 @@ defmodule LevantarVuelo.Router do
 
   defp parse_month(nil), do: nil
   defp parse_month(%{"year" => y, "month" => m}), do: {y, m}
+
+  # Los nodos se llaman "levantar@<IP del contenedor>". El DNS interno de Docker
+  # también resuelve al revés, de IP a "<contenedor>.<red>"
+  # (ej. "checkpoint-2-app-1.checkpoint-2_default"). Fuera de Docker (tests,
+  # mix run) el nombre del nodo no tiene IP y devuelve nil.
+  #
+  # Se usa :inet_res (le pregunta directo al DNS) y no :inet.gethostbyaddr,
+  # que mira antes /etc/hosts: ahí la IP propia del contenedor figura con su
+  # ID (ej. "ed50c00a13b2"), no con su nombre.
+  defp container_name(node) do
+    with [_, host] <- String.split(to_string(node), "@"),
+         {:ok, ip} <- :inet.parse_address(String.to_charlist(host)),
+         {:ok, {:hostent, name, _aliases, _type, _len, _addrs}} <- :inet_res.gethostbyaddr(ip) do
+      name |> to_string() |> String.split(".") |> hd()
+    else
+      _ -> nil
+    end
+  end
 
   defp notify_flight_published(users, flight_id) do
     require Logger

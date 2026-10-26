@@ -244,6 +244,7 @@ Orden pensado para que cada hito se pueda verificar solo.
   - Re-replicación cuando entra o sale un nodo (sección 3).
   - De paso: `:offer_expired` sobre un vuelo ya agotado lo pasaba de `{:closed, :sold_out}` a `{:closed, :expired}`. Ahora se ignora.
   - Router: `:no_quorum` y `:stale_epoch` dan 503.
+  - `GET /flights/:id/location` (también en la colección de Postman): contenedor donde vive el vuelo, época, versión y contenedores con copia. El nombre sale del DNS de Docker al revés (IP → contenedor) con `:inet_res`, porque `:inet` mira antes `/etc/hosts` y para la IP propia devuelve el ID del contenedor. Verificado: antes de matar el contenedor, app-1 con época 1 y 3 copias; después, app-2 con época 2 y 2 copias; al revivir app-1, 3 copias otra vez.
   - **Tests (52, un solo nodo con factor 1):** reglas de época y versión del `ReplicaStore`, elección de nodos (cantidad, determinismo, estabilidad), recuperación tras matar el proceso (mismas reservas, época 1 → 2) y fencing (el primario viejo recibe `:stale_epoch`, se detiene y no confirma nada).
   - **Verificado en Docker (3 nodos):**
     - Al matar el nodo de un vuelo con 3 escrituras, vuelve a responder en ~200 ms (en el hito 2 eran 1,2 a 1,5 s), en otro nodo, con época 2 y versión 3.
