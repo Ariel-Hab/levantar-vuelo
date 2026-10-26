@@ -263,7 +263,8 @@ Orden pensado para que cada hito se pueda verificar solo.
   - Validación de body con 400 (hoy es 500), y `String.to_atom` sobre input del usuario en `/seats` se cambia por una lista blanca.
 - [ ] **7. Pruebas y documentación.**
   - Tests multi-nodo con `:peer` (OTP 25+).
-  - Script de caos: `docker compose up --scale app=3`, matar un contenedor con carga y verificar que no se perdió ninguna compra confirmada.
+  - Script de caos: `docker compose up --scale app=3`, matar un contenedor con carga y verificar que no se perdió ninguna compra confirmada. Puede usar el plano de control y `/location` para elegir qué matar.
+  - [x] **Plano de control** (`control/`, hecho el 26/10). Proyecto Elixir aparte, en su propio contenedor en `127.0.0.1:4001`, con el socket de Docker montado. `GET /nodes` lista los nodos; `POST /nodes/:container/kill|stop|start` actúa sobre uno; `POST /nodes/start` levanta todos los parados. Solo acepta contenedores con `com.docker.compose.service=app` del mismo proyecto (el proyecto lo lee de sus propias etiquetas), así que no puede tocar nginx ni contenedores de otros proyectos. Está en la colección de Postman. Verificado: kill → el vuelo pasa a otro contenedor con época + 1; `POST /nodes/start` lo levanta y el vuelo vuelve a tener 3 réplicas; `stop` apaga en orden en 1,75 s y el vuelo se recupera en otro nodo con sus reservas. Es la base del autoscaler: falta crear contenedores nuevos (escalar), que no es lo mismo que levantar uno parado.
   - `checkpoint-2/docs/tradeoffs.md`, README del checkpoint, actualizar el diagrama de actores.
 
 ---
