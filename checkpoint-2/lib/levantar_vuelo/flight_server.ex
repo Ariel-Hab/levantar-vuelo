@@ -8,6 +8,10 @@ defmodule LevantarVuelo.FlightServer do
   # Cada cuánto se reintenta algo que falló por falta de quórum de réplicas
   @retry_ms 1_000
 
+  # Cuántas veces y cada cuánto se reintenta un vuelo que no aparece (ver call/3)
+  @not_found_retries 3
+  @not_found_retry_ms 100
+
   # ---------------------------------------------------------------------------
   # API pública — las funciones que llaman los demás módulos
   # (igual que incrementar_like/obtener_likes del ejemplo de clase)
@@ -33,8 +37,17 @@ defmodule LevantarVuelo.FlightServer do
 
   # Wrapper para manejar los calls y sus errores. Usa SafeCall (compartido con AlertIndex)
   # asi no mata el proceso que llama si el vuelo no existe, se cae, o su nodo se desconecta.
-  defp call(flight_id, msg) do
+  #
+  # Si el vuelo no aparece en el registro, reintenta un par de veces antes de
+  # decir que no existe: Horde.Registry tarda un instante en enterarse de un
+  # vuelo recién creado en otro nodo (o recién reiniciado tras una caída).
+  # Reintentar es seguro: con :noproc el pedido no le llegó a nadie.
+  defp call(flight_id, msg, retries \\ @not_found_retries) do
     case SafeCall.call(via(flight_id), msg) do
+      {:error, :noproc} when retries > 0 ->
+        Process.sleep(@not_found_retry_ms)
+        call(flight_id, msg, retries - 1)
+
       {:error, :noproc} -> {:error, :not_found}      # Para un vuelo, "no hay proceso" es "no existe"
       other -> other                                 # La respuesta, o :down / :nodedown / :timeout tal cual
     end
@@ -67,10 +80,21 @@ defmodule LevantarVuelo.FlightServer do
   @impl true
   def handle_continue(:recover, state), do: recover(state)
 
+  # Todos los pedidos pasan primero por acá: si el mailbox está saturado se
+  # rechazan enseguida (ver overloaded?/0). :location no, para poder ver dónde
+  # está un vuelo aunque esté saturado.
+  @impl true
+  def handle_call(msg, from, state) do
+    if msg != :location and overloaded?() do
+      {:reply, {:error, :overloaded}, state}
+    else
+      handle_request(msg, from, state)
+    end
+  end
+
   # Dónde vive el vuelo y cómo está su réplica (GET /flights/:id/location).
   # Contesta aunque el vuelo se esté recuperando: sirve para ver dónde quedó trabado.
-  @impl true
-  def handle_call(:location, _from, state) do
+  defp handle_request(:location, _from, state) do
     info = %{
       node: node(),
       recovering: is_nil(state.flight),
@@ -83,18 +107,18 @@ defmodule LevantarVuelo.FlightServer do
   end
 
   # Mientras no se pudo recuperar el vuelo no atiende pedidos: 503, reintentá
-  def handle_call(_msg, _from, %{flight: nil} = state) do
+  defp handle_request(_msg, _from, %{flight: nil} = state) do
     {:reply, {:error, :no_quorum}, state}
   end
 
   # Devuelve el estado completo del vuelo (para GET /flights/:id).
   # Lo envolvemos en {:ok, _} para que get devuelva siempre {:ok, _} | {:error, _}
-  def handle_call(:get, _from, state) do
+  defp handle_request(:get, _from, state) do
     {:reply, {:ok, state.flight}, state}
   end
 
   # Reserva un lugar. Overbooking permitido, por eso no falla aunque no haya stock.
-  def handle_call({:reserve, user_id, reservation_id}, _from, state) do
+  defp handle_request({:reserve, user_id, reservation_id}, _from, state) do
     with {:ok, rid, new_flight} <- Flight.reserve(state.flight, user_id, reservation_id),
          {:ok, state} <- commit(state, new_flight) do
       {:reply, {:ok, rid}, state}
@@ -108,7 +132,7 @@ defmodule LevantarVuelo.FlightServer do
   # Elige asientos. Todo o nada: si no alcanza devuelve error con disponibilidad.
   # Si al asignar quedan 0 asientos, Flight cierra el vuelo automáticamente
   # y esta función detecta eso para mandar las notificaciones.
-  def handle_call({:assign_seats, reservation_id, wanted}, _from, state) do
+  defp handle_request({:assign_seats, reservation_id, wanted}, _from, state) do
     with {:ok, new_flight, assigned} <- Flight.assign_seats(state.flight, reservation_id, wanted),
          {:ok, state} <- commit(state, new_flight) do
       # Si el vuelo se cerró al quedarse sin asientos, notificamos
@@ -247,7 +271,16 @@ defmodule LevantarVuelo.FlightServer do
     %{state | replicas: saved}
   end
 
-  # Respuesta de un handle_call cuyo cambio no se pudo confirmar:
+  # Límite del mailbox (load shedding). Cada escritura espera a las réplicas,
+  # así que si se acumulan muchos pedidos, los últimos esperarían más que el
+  # timeout del cliente (5 s) y su respuesta llegaría cuando ya nadie la espera.
+  # Mejor contestarles 503 enseguida y que reintenten.
+  defp overloaded? do
+    {:message_queue_len, len} = Process.info(self(), :message_queue_len)
+    len > Application.get_env(:levantar_vuelo, :flight_max_mailbox, 1_000)
+  end
+
+  # Respuesta de un pedido cuyo cambio no se pudo confirmar:
   #   :no_quorum   → 503 y sigue; el cliente puede reintentar.
   #   :stale_epoch → hay un primario más nuevo para este vuelo y este se retira.
   #                  Con {:shutdown, _} Horde no lo reinicia.

@@ -4,7 +4,7 @@ defmodule LevantarVuelo.FlightServerTest do
   alias LevantarVuelo.{FlightServer, Notifier, ReplicaStore}
 
   # Atributos base para arrancar un FlightServer en los tests
-  defp vuelo_attrs(id \\ "fl_test") do
+  defp vuelo_attrs(id) do
     %{
       id: id,
       airline: "Aerolineas Test",
@@ -144,6 +144,37 @@ defmodule LevantarVuelo.FlightServerTest do
 
       {:ok, {{2, ^version}, flight}} = ReplicaStore.fetch_latest([node()], id)
       assert flight.reservations == %{}
+    end
+  end
+
+  describe "límite de mailbox" do
+    setup do
+      previous = Application.get_env(:levantar_vuelo, :flight_max_mailbox)
+      Application.put_env(:levantar_vuelo, :flight_max_mailbox, 5)
+      on_exit(fn -> Application.put_env(:levantar_vuelo, :flight_max_mailbox, previous) end)
+    end
+
+    test "con el mailbox saturado contesta :overloaded enseguida", %{flight_id: id} do
+      {:ok, _} = FlightServer.get(id)
+      pid = whereis(id)
+
+      # Lo frenamos para que los pedidos se acumulen en el mailbox
+      :sys.suspend(pid)
+      tasks = for _ <- 1..20, do: Task.async(fn -> FlightServer.get(id) end)
+      wait_until(fn -> Process.info(pid, :message_queue_len) == {:message_queue_len, 20} end)
+      :sys.resume(pid)
+
+      results = Task.await_many(tasks)
+      # Los primeros encuentran la cola llena y se rechazan; los últimos se atienden
+      assert Enum.count(results, &match?({:error, :overloaded}, &1)) > 0
+      assert Enum.count(results, &match?({:ok, _}, &1)) > 0
+    end
+  end
+
+  defp wait_until(fun, tries \\ 100) do
+    cond do
+      fun.() -> :ok
+      tries > 0 -> Process.sleep(10); wait_until(fun, tries - 1)
     end
   end
 

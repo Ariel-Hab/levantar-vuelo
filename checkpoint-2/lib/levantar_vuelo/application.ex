@@ -13,7 +13,14 @@ defmodule LevantarVuelo.Application do
           # Registro distribuido: "vuelo X -> pid" visible desde cualquier nodo.
           # members: :auto hace que Horde sume y saque nodos solo, a medida que
           # libcluster los conecta o se caen.
-          {Horde.Registry, name: LevantarVuelo.Registry, keys: :unique, members: :auto},
+          # sync_interval: cada cuánto se propaga el registro a los otros nodos
+          # (por defecto 300 ms). Mientras no se propaga, otro nodo no encuentra
+          # un vuelo recién creado; FlightServer reintenta un poco por eso.
+          {Horde.Registry,
+           name: LevantarVuelo.Registry,
+           keys: :unique,
+           members: :auto,
+           delta_crdt_options: [sync_interval: 100]},
           # Alertas replicadas en todos los nodos con un CRDT (AP): cada nodo tiene
           # su copia y se sincronizan solas. Ver AlertIndex.
           LevantarVuelo.AlertIndex,

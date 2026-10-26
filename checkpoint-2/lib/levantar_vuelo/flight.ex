@@ -43,7 +43,7 @@ defmodule LevantarVuelo.Flight do
   def reserve(%__MODULE__{} = flight, user_id, reservation_id) do
     case Map.get(flight.reservations, reservation_id) do
       nil ->
-        reservation = %{user_id: user_id, status: :pending, seats: []}
+        reservation = %{user_id: user_id, status: :pending, seats: [], requested: nil}
         {:ok, reservation_id, put_in(flight.reservations[reservation_id], reservation)}
 
       %{user_id: ^user_id} ->
@@ -63,22 +63,27 @@ defmodule LevantarVuelo.Flight do
 
   seats_wanted es una lista de :window | :aisle | :middle | :any
   Ejemplo: [:window, :window, :aisle]
+
+  Es idempotente: repetir el mismo pedido sobre una reserva ya confirmada
+  devuelve los mismos asientos sin cambiar nada (sirve cuando el cliente
+  recibió un :timeout y no sabe si se aplicó). Un pedido distinto da error.
   """
-  def assign_seats(%__MODULE__{status: {:closed, _}}, _rid, _wanted),
-    do: {:error, :flight_closed}
+  def assign_seats(%__MODULE__{} = flight, rid, wanted) do
+    reservation = Map.get(flight.reservations, rid)
 
-  def assign_seats(%__MODULE__{reservations: ress} = flight, rid, wanted) do
-    case Map.get(ress, rid) do
-      nil ->
-        {:error, :reservation_not_found}
-
-      %{status: :pending} ->
-        do_assign(flight, rid, wanted)
-
-      %{status: status} ->
-        {:error, {:reservation_already, status}}
+    cond do
+      # Va primero porque el vuelo pudo cerrarse justo con esa compra
+      retry?(reservation, wanted) -> {:ok, flight, reservation.seats}
+      match?({:closed, _}, flight.status) -> {:error, :flight_closed}
+      is_nil(reservation) -> {:error, :reservation_not_found}
+      reservation.status == :pending -> do_assign(flight, rid, wanted)
+      true -> {:error, {:reservation_already, reservation.status}}
     end
   end
+
+  # Mismo pedido sobre una reserva confirmada (el orden de los asientos no importa)
+  defp retry?(%{status: :confirmed, requested: requested}, wanted), do: Enum.sort(wanted) == requested
+  defp retry?(_reservation, _wanted), do: false
 
   defp do_assign(flight, rid, wanted) do
     # Separamos los pedidos específicos de los :any
@@ -90,7 +95,11 @@ defmodule LevantarVuelo.Flight do
 
     case check_and_allocate(flight.available, specific, any_count) do
       {:ok, new_available, assigned} ->
-        reservation = %{flight.reservations[rid] | status: :confirmed, seats: assigned}
+        reservation = %{flight.reservations[rid] |
+          status: :confirmed,
+          seats: assigned,
+          requested: Enum.sort(wanted)
+        }
         new_state = %{flight |
           available: new_available,
           reservations: Map.put(flight.reservations, rid, reservation)

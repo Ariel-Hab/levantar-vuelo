@@ -9,6 +9,10 @@ config :levantar_vuelo, :cluster_topologies, []
 # vuelo necesita `read_quorum` respuestas. `timeout`: ms que se espera a las réplicas.
 config :levantar_vuelo, :replication, factor: 3, write_quorum: 2, read_quorum: 2, timeout: 1_000
 
+# Pedidos en cola a partir de los cuales un FlightServer contesta 503 enseguida
+# en vez de atenderlos (load shedding, ver FlightServer.overloaded?/0).
+config :levantar_vuelo, :flight_max_mailbox, 1_000
+
 # Los tests corren en un solo nodo: con quórum 2 no se podría confirmar nada.
 if config_env() == :test do
   config :levantar_vuelo, :replication, factor: 1, write_quorum: 1, read_quorum: 1, timeout: 1_000

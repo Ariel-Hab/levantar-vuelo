@@ -29,6 +29,29 @@ defmodule LevantarVuelo.RouterTest do
     assert conn.status == 409
   end
 
+  # Antes un body incompleto rompía un pattern match y la respuesta era 500
+  test "un body inválido devuelve 400 con un mensaje" do
+    conn = conn(:post, "/flights", Map.delete(@vuelo, :airline)) |> Router.call(@opts)
+    assert conn.status == 400
+    assert Jason.decode!(conn.resp_body)["error"] =~ "airline"
+
+    conn = conn(:post, "/alerts", %{id: "a1"}) |> Router.call(@opts)
+    assert conn.status == 400
+
+    conn = conn(:post, "/flights/fl_x/reservations", %{user_id: "u1"}) |> Router.call(@opts)
+    assert conn.status == 400
+  end
+
+  # Antes se hacía String.to_atom con lo que mandara el cliente
+  test "un asiento desconocido devuelve 400 y no crea un átomo" do
+    conn =
+      conn(:post, "/flights/fl_x/reservations/r1/seats", %{seats: ["asiento_inventado_xyz"]})
+      |> Router.call(@opts)
+
+    assert conn.status == 400
+    assert_raise ArgumentError, fn -> String.to_existing_atom("asiento_inventado_xyz") end
+  end
+
   test "POST /flights avisa a los usuarios con una alerta que coincide (F3)" do
     LevantarVuelo.AlertIndex.add(
       LevantarVuelo.Alert.new(%{id: "a_router", user_id: "u_router", origin: "EZE",

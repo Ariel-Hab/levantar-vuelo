@@ -143,6 +143,29 @@ defmodule LevantarVuelo.FlightTest do
       {:ok, cerrado, _} = Flight.assign_seats(f1, "r1", [:window, :aisle])
       assert {:closed, :sold_out} = cerrado.status
     end
+
+    # Idempotencia: el cliente puede recibir un :timeout con la compra ya hecha
+    test "repetir el mismo pedido devuelve los mismos asientos sin cambiar nada" do
+      {:ok, _, f1} = Flight.reserve(vuelo_base(), "u1", "r1")
+      {:ok, f2, asientos} = Flight.assign_seats(f1, "r1", [:window])
+
+      assert {:ok, ^f2, ^asientos} = Flight.assign_seats(f2, "r1", [:window])
+    end
+
+    test "el reintento funciona aunque esa compra haya agotado el vuelo" do
+      {:ok, _, f1} = Flight.reserve(vuelo_base(), "u1", "r1")
+      {:ok, cerrado, asientos} = Flight.assign_seats(f1, "r1", [:window, :aisle])
+
+      # el orden de los asientos pedidos no importa
+      assert {:ok, ^cerrado, ^asientos} = Flight.assign_seats(cerrado, "r1", [:aisle, :window])
+    end
+
+    test "otro pedido sobre una reserva ya confirmada da error" do
+      {:ok, _, f1} = Flight.reserve(vuelo_base(), "u1", "r1")
+      {:ok, f2, _} = Flight.assign_seats(f1, "r1", [:window])
+
+      assert {:error, {:reservation_already, :confirmed}} = Flight.assign_seats(f2, "r1", [:aisle])
+    end
   end
 
   describe "close/2" do
